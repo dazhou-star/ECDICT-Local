@@ -1146,7 +1146,6 @@ function speakWord(word) {
     state.page = page;
     setSide(page);
     hideSuggestions();
-
     $("#welcome").hidden = true;
     $("#empty").hidden = true;
 
@@ -1155,59 +1154,223 @@ function speakWord(word) {
         await loadFavorites();
       } catch (e) {
         $("#results").innerHTML = `
-          <h2 style="font-size:18px;margin:4px 0 16px">我的生词本</h2>
-          <div class="welcome">
-            <h2>无法加载生词本</h2>
-            <p>${esc(e.message)}。请确认词典服务器正常运行后重试。</p>
-          </div>
-        `;
+          <section class="collection-panel">
+            <div class="collection-empty">
+              <div class="collection-empty-icon">!</div>
+              <h2>生词本暂时无法加载</h2>
+              <p>${esc(e.message)}。请确认词典服务器正常运行后重试。</p>
+              <button type="button" class="collection-retry" id="retryFavorites">重新加载</button>
+            </div>
+          </section>`;
+        $("#retryFavorites").addEventListener("click", () => showList("favorites"));
         status("生词本加载失败");
         return;
       }
     }
 
-    const list = page === "favorites"
-      ? state.favorites.map(word => ({
-          word,
-          added_at: state.favoriteDates[word.toLowerCase()] || ""
-        }))
-      : state.history.map(word => ({ word, added_at: "" }));
+    const isFavorites = page === "favorites";
+    const total = isFavorites ? state.favorites.length : state.history.length;
+    const title = isFavorites ? "我的生词本" : "最近查询";
+    const subtitle = isFavorites
+      ? "集中管理收藏单词。收藏内容保存在服务器，可在局域网设备间共享。"
+      : "按最近查询顺序排列。查询历史保存在当前浏览器中。";
 
     $("#results").innerHTML = `
-      <h2 style="font-size:18px;margin:4px 0 16px">
-        ${page === "favorites" ? "我的生词本" : "最近查询"}
-      </h2>
-    `;
+      <section class="collection-panel" data-page="${page}">
+        <header class="collection-header">
+          <div class="collection-heading">
+            <div class="collection-kicker">${isFavorites ? "MY VOCABULARY" : "SEARCH HISTORY"}</div>
+            <h2>${title}</h2>
+            <p>${subtitle}</p>
+          </div>
+          <div class="collection-total">
+            <strong id="collectionTotal">${total}</strong>
+            <span>个单词</span>
+          </div>
+        </header>
 
-    if (!list.length) {
-      $("#results").innerHTML += `
-        <div class="welcome">
-          <h2>这里暂时是空的</h2>
-          <p>查询单词后，可以在这里查看记录。</p>
-        </div>
-      `;
-      return;
-    }
-
-    list.forEach(item => {
-      const row = document.createElement("div");
-      row.className = "list-row";
-      row.innerHTML = `
-        <div class="list-row-info">
-          <b>${esc(item.word)}</b>
-          ${page === "favorites"
-            ? `<small class="list-date">添加于 ${esc(formatFavoriteDate(item.added_at))}</small>`
+        <div class="collection-toolbar">
+          <label class="collection-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="collectionSearch" type="search" placeholder="筛选单词… 按 / 快速定位" autocomplete="off" spellcheck="false">
+            <kbd>/</kbd>
+          </label>
+          <label class="collection-sort">
+            <span>排序</span>
+            <select id="collectionSort">
+              <option value="recent">${isFavorites ? "最近添加" : "最近查询"}</option>
+              <option value="az">A → Z</option>
+              <option value="za">Z → A</option>
+            </select>
+          </label>
+          ${!isFavorites && total
+            ? `<button type="button" class="collection-clear" id="clearHistory">清空历史</button>`
             : ""}
         </div>
-        <button type="button">查看 →</button>
-      `;
 
-      row.querySelector("button")
-        .addEventListener("click", () => showWord(item.word));
+        <div class="collection-summary">
+          <span id="collectionSummary">显示 ${total} / ${total} 个单词</span>
+          <span>${isFavorites ? "点击单词查看释义 · ☆ 可移除收藏" : "点击单词查看释义 · ☆ 可加入生词本"}</span>
+        </div>
 
-      $("#results").appendChild(row);
+        <div class="collection-grid" id="collectionGrid"></div>
+        <div class="collection-empty collection-no-results" id="collectionEmpty" hidden>
+          <div class="collection-empty-icon">⌕</div>
+          <h3 id="collectionEmptyTitle">没有匹配的单词</h3>
+          <p id="collectionEmptyText">试试其他拼写。</p>
+          <button type="button" id="resetCollectionSearch" class="collection-retry">清除筛选</button>
+        </div>
+      </section>
+    `;
+
+    const search = $("#collectionSearch");
+    const sort = $("#collectionSort");
+    const grid = $("#collectionGrid");
+    const empty = $("#collectionEmpty");
+
+    function getItems() {
+      const source = isFavorites
+        ? state.favorites.map(word => ({
+            word,
+            added_at: state.favoriteDates[word.toLowerCase()] || ""
+          }))
+        : state.history.map((word, index) => ({ word, added_at: "", position: index + 1 }));
+
+      const needle = search.value.trim().toLocaleLowerCase();
+      const items = source.filter(item => item.word.toLocaleLowerCase().includes(needle));
+
+      if (sort.value === "az") {
+        items.sort((a, b) => a.word.localeCompare(b.word, "en", { sensitivity: "base" }));
+      } else if (sort.value === "za") {
+        items.sort((a, b) => b.word.localeCompare(a.word, "en", { sensitivity: "base" }));
+      }
+      return { source, items };
+    }
+
+    function renderRows() {
+      const { source, items } = getItems();
+      $("#collectionTotal").textContent = source.length;
+      $("#collectionSummary").textContent = `显示 ${items.length} / ${source.length} 个单词`;
+      grid.innerHTML = items.map((item, index) => {
+        const saved = isSaved(item.word);
+        const meta = isFavorites
+          ? `添加于 ${esc(formatFavoriteDate(item.added_at))}`
+          : `最近查询 · 第 ${item.position} 条`;
+        const action = isFavorites
+          ? `<button type="button" class="collection-action remove" data-action="remove" data-word="${esc(item.word)}" aria-label="从生词本移除 ${esc(item.word)}" title="移除收藏">移除</button>`
+          : `<button type="button" class="collection-action ${saved ? "is-saved" : "add"}" data-action="add" data-word="${esc(item.word)}" ${saved ? "disabled" : ""} aria-label="${saved ? "已收藏" : `收藏 ${esc(item.word)}`}" title="${saved ? "已在生词本中" : "加入生词本"}">${saved ? "✓ 已收藏" : "☆ 收藏"}</button>`;
+
+        return `
+          <article class="collection-word-card">
+            <button type="button" class="collection-word-open" data-action="open" data-word="${esc(item.word)}">
+              <span class="collection-word-main">
+                <span class="collection-word">${esc(item.word)}</span>
+                <span class="collection-word-index">${String(index + 1).padStart(2, "0")}</span>
+              </span>
+              <span class="collection-word-meta">${meta}</span>
+            </button>
+            ${action}
+          </article>`;
+      }).join("");
+
+      if (!items.length) {
+        empty.hidden = false;
+        grid.hidden = true;
+        if (!source.length) {
+          $("#collectionEmptyTitle").textContent = isFavorites ? "生词本还是空的" : "还没有查询记录";
+          $("#collectionEmptyText").textContent = isFavorites
+            ? "查词后，点击词条上的“加入生词本”，就能把单词收集到这里。"
+            : "在上方查找一个单词，系统会自动把它加入最近查询。";
+          $("#resetCollectionSearch").hidden = true;
+        } else {
+          $("#collectionEmptyTitle").textContent = "没有匹配的单词";
+          $("#collectionEmptyText").textContent = "试试更短的关键词，或清除筛选条件。";
+          $("#resetCollectionSearch").hidden = false;
+        }
+      } else {
+        empty.hidden = true;
+        grid.hidden = false;
+      }
+
+      grid.querySelectorAll("[data-action]").forEach(button => {
+        button.addEventListener("click", async () => {
+          const word = button.dataset.word;
+          const actionName = button.dataset.action;
+          if (actionName === "open") {
+            showWord(word);
+            return;
+          }
+
+          button.disabled = true;
+          try {
+            if (actionName === "remove") {
+              await api(`/api/favorites/${encodeURIComponent(word)}`, { method: "DELETE" });
+              await loadFavorites();
+              status(`已从生词本移除 ${word}`);
+            } else if (actionName === "add") {
+              await api("/api/favorites", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ word })
+              });
+              await loadFavorites();
+              status(`已收藏 ${word}`);
+            }
+            renderRows();
+          } catch (e) {
+            button.disabled = false;
+            status(`操作失败：${e.message}`);
+            console.error(e);
+          }
+        });
+      });
+    }
+
+    search.addEventListener("input", renderRows);
+    sort.addEventListener("change", renderRows);
+    $("#resetCollectionSearch").addEventListener("click", () => {
+      search.value = "";
+      renderRows();
+      search.focus();
     });
+
+    if (!isFavorites && $("#clearHistory")) {
+      $("#clearHistory").addEventListener("click", () => {
+        if (!state.history.length) return;
+        if (!window.confirm(`确定清空全部 ${state.history.length} 条最近查询记录吗？此操作不会删除生词本。`)) return;
+        state.history = [];
+        save("lexicon-history", state.history);
+        renderRows();
+        status("最近查询记录已清空");
+      });
+    }
+
+    search.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        const first = grid.querySelector('[data-action="open"]');
+        if (first) first.click();
+      } else if (event.key === "Escape") {
+        search.value = "";
+        renderRows();
+      }
+    });
+
+    renderRows();
+    search.focus({ preventScroll: true });
   }
+
+  document.addEventListener("keydown", event => {
+    if (state.page !== "favorites" && state.page !== "history") return;
+    const target = event.target;
+    if (target && (target.matches("input, textarea, select") || target.isContentEditable)) return;
+    if (event.key === "/") {
+      const listSearch = $("#collectionSearch");
+      if (listSearch) {
+        event.preventDefault();
+        listSearch.focus();
+      }
+    }
+  });
 
   q.addEventListener("input", () => {
 
