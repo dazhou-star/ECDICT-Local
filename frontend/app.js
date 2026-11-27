@@ -21,7 +21,8 @@
 
     history: read("lexicon-history", []),
 
-    audio: null
+    audio: null,
+
 
   };
 
@@ -1142,6 +1143,506 @@ function speakWord(word) {
 
 
 
+  function normalizeOcrWord(value) {
+    const raw = String(value || "").trim().replace(/^\d+[.)、]\s*/, "");
+    const match = raw.match(/[A-Za-z][A-Za-z'-]*/);
+    return match ? match[0].toLowerCase() : raw.replace(/[^A-Za-z'-]/g, "").toLowerCase();
+  }
+
+  function showImageImport() {
+    state.page = "image-import";
+    setSide("image-import");
+    hideSuggestions();
+    $("#welcome").hidden = true;
+    $("#empty").hidden = true;
+    status("图片单词本导入工具");
+
+    $("#results").innerHTML = `
+      <section class="image-import-panel">
+        <header class="image-import-header">
+          <div>
+            <div class="collection-kicker">IMAGE → VOCABULARY</div>
+            <h2>图片批量导入</h2>
+            <p>上传手写单词表，识别英文单词与中文释义，校对后一次性加入生词本。</p>
+          </div>
+          <div class="image-import-badge" id="imageEngineBadge">Ollama · Gemma 4</div>
+        </header>
+
+        <div class="image-import-body">
+          <label class="image-dropzone" id="imageDropzone">
+            <input type="file" id="wordImage" accept="image/*" hidden>
+            <span class="image-drop-icon">＋</span>
+            <strong>选择单词表图片</strong>
+            <span>也可以将图片拖到这里 · JPG / PNG / WebP</span>
+            <small>图片将上传到词典服务器，由本机 Ollama · Gemma 4 读取</small>
+          </label>
+          <div class="image-vision-status" id="imageVisionStatus">正在检查本机 Ollama 与 Gemma 4 模型…</div>
+
+          <div class="image-import-preview" id="imagePreview" hidden>
+            <div class="image-preview-head">
+              <div><b id="imageFileName">已选择图片</b><span id="imageFileSize"></span></div>
+              <button type="button" class="image-text-button" id="replaceImage">更换图片</button>
+            </div>
+            <img id="imagePreviewImg" alt="待识别的单词表图片">
+            <button type="button" class="image-recognize-button" id="recognizeImage">使用 Gemma 4 识别图片</button>
+          </div>
+
+          <div class="image-import-progress" id="ocrProgress" hidden>
+            <div class="image-progress-top"><b id="ocrProgressTitle">正在连接本机 Ollama…</b><span id="ocrProgressPercent">0%</span></div>
+            <div class="image-progress-track"><i id="ocrProgressBar"></i></div>
+            <p id="ocrProgressDetail">图片会由运行词典的电脑通过本机 Ollama 和 Gemma 4 进行识别。</p>
+          </div>
+
+          <div class="image-import-note">
+            <b>识别说明</b>
+            <span>Gemma 4 会读取整张图片并按纸面行顺序提取中英文，严格保留原始释义，不主动纠正拼写或补充内容。识别结果随后会通过本地 ECDICT 做英文拼写与中文释义双向校对。被模型标记为不确定的行会特别提示；最终请人工检查。加入生词本的内容是英文单词，图片中文释义仅用于核对，不会覆盖词典原有释义。</span>
+          </div>
+
+          <details class="image-manual-entry">
+            <summary>识别不了？手动粘贴或录入</summary>
+            <p>每行一个单词；也可使用“英文单词 + Tab + 中文释义”的格式。</p>
+            <textarea id="manualWordLines" rows="5" placeholder="itchy&#9;adj. 发痒的&#10;allergy&#9;n. 过敏&#10;misery&#9;n. 苦难"></textarea>
+            <button type="button" class="image-text-button" id="parseManualLines">整理为待导入列表</button>
+          </details>
+        </div>
+
+        <section class="image-review" id="imageReview" hidden>
+          <div class="image-review-head">
+            <div>
+              <h3>双语智能校对与人工确认</h3>
+              <p id="imageReviewSummary">已识别 0 行</p>
+              <div class="image-correction-status" id="imageCorrectionStatus">等待词典双向校对…</div>
+            </div>
+            <div class="image-review-tools">
+              <button type="button" class="image-text-button" id="rerunImageCorrection">重新双语校对</button>
+              <button type="button" class="image-text-button" id="addImportRow">＋ 添加一行</button>
+              <button type="button" class="image-text-button" id="selectAllImportRows">全选</button>
+            </div>
+          </div>
+          <div class="image-review-table-wrap">
+            <table class="image-review-table">
+              <thead><tr><th>导入</th><th>英文单词 / 词典建议</th><th>图片中的中文释义</th><th>双语词典校对</th><th></th></tr></thead>
+              <tbody id="imageReviewRows"></tbody>
+            </table>
+          </div>
+          <div class="image-review-footer">
+            <span id="imageSelectedCount">已选择 0 个单词</span>
+            <button type="button" class="image-import-submit" id="importSelectedWords" disabled>加入生词本</button>
+          </div>
+        </section>
+      </section>
+    `;
+
+    let selectedFile = null;
+    let previewUrl = null;
+    let rows = [];
+    let workerBusy = false;
+
+    const fileInput = $("#wordImage");
+    const dropzone = $("#imageDropzone");
+    const preview = $("#imagePreview");
+    const imagePreview = $("#imagePreviewImg");
+    const progress = $("#ocrProgress");
+    const review = $("#imageReview");
+    const tbody = $("#imageReviewRows");
+
+    async function checkVisionStatus() {
+      const badge = $("#imageEngineBadge");
+      const info = $("#imageVisionStatus");
+      try {
+        const result = await api("/api/image-import/status");
+        if (result.available) {
+          badge.textContent = `Ollama · ${result.model || "Gemma 4"}`;
+          badge.classList.remove("unavailable");
+          info.textContent = `已连接本机 Ollama，模型 ${result.model} 已就绪。图片将在服务器本机处理。`;
+        } else {
+          badge.textContent = "Gemma 4 未就绪";
+          badge.classList.add("unavailable");
+          info.textContent = result.message || "未检测到可用的 Gemma 4 模型。";
+        }
+      } catch (error) {
+        badge.textContent = "Ollama 未连接";
+        badge.classList.add("unavailable");
+        info.textContent = `无法检查 Ollama：${error.message}`;
+      }
+    }
+    checkVisionStatus();
+
+    function progressUpdate(title, percent, detail) {
+      $("#ocrProgressTitle").textContent = title;
+      $("#ocrProgressPercent").textContent = `${Math.round(percent)}%`;
+      $("#ocrProgressBar").style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      $("#ocrProgressDetail").textContent = detail || "";
+    }
+
+    function setImage(file) {
+      if (!file) return;
+      if (!file.type.startsWith("image/")) {
+        status("请选择图片文件");
+        return;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        status("图片不能超过 20 MB");
+        return;
+      }
+      selectedFile = file;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(file);
+      imagePreview.src = previewUrl;
+      $("#imageFileName").textContent = file.name;
+      $("#imageFileSize").textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB`;
+      preview.hidden = false;
+      dropzone.hidden = true;
+      review.hidden = true;
+      progress.hidden = true;
+      rows = [];
+    }
+
+    function correctionLevelLabel(level) {
+      return ({
+        verified: "英文命中",
+        meaning_check: "释义待核对",
+        high: "双语高度吻合",
+        review: "候选待确认",
+        low: "匹配较弱",
+        none: "未找到候选"
+      })[level] || "等待校对";
+    }
+
+    function correctionPercent(value) {
+      return `${Math.round((Number(value) || 0) * 100)}%`;
+    }
+
+    function correctionMarkup(row, index) {
+      const correction = row.correction;
+      const visionWarning = row.recognitionUncertain
+        ? `<div class="image-ai-uncertain"><b>Gemma 4 标记为不确定</b>${row.recognitionNote ? `<small>${esc(row.recognitionNote)}</small>` : "<small>请重点核对这一行的原图内容。</small>"}</div>` : "";
+      if (!correction) {
+        return `${visionWarning}<div class="image-correction-box pending"><span class="image-correction-badge">等待双语校对</span><small>将分别检索英文词头和中文释义。</small></div>`;
+      }
+      const suggested = String(row.suggestionWord || correction.suggested_word || "").trim();
+      const current = normalizeOcrWord(row.word);
+      const stale = Boolean(row.correctionStale);
+      const hasAlternative = !stale && suggested && suggested.toLowerCase() !== current.toLowerCase();
+      const levelClass = correction.level === "high" || correction.level === "verified" ? "good"
+        : correction.level === "review" || correction.level === "meaning_check" ? "warn" : "weak";
+      const original = row.originalWord && row.originalWord.toLowerCase() !== current.toLowerCase()
+        ? `<small>AI 原始识别：<s>${esc(row.originalWord)}</s></small>` : "";
+      const alternative = hasAlternative
+        ? `<div class="image-correction-suggestion">建议单词：<strong>${esc(suggested)}</strong></div>`
+        : "";
+      const dictionaryMeaning = row.dictionaryMeaning
+        ? `<div class="image-correction-gloss"><b>词典释义：</b>${esc(row.dictionaryMeaning)}</div>` : `<div class="image-correction-gloss">未检索到可用词典释义</div>`;
+      const metrics = `<div class="image-correction-metrics"><span>英文相似度 ${correctionPercent(correction.english_score)}</span><span>中文相似度 ${correctionPercent(correction.meaning_score)}</span><span>综合 ${correctionPercent(correction.score)}</span></div>`;
+      const otherCandidates = (correction.alternatives || [])
+        .filter(item => item.word && item.word.toLowerCase() !== suggested.toLowerCase() && Number(item.score) >= 0.48)
+        .slice(0, 2);
+      const otherCandidatesHtml = otherCandidates.length
+        ? `<details class="image-correction-alternatives"><summary>其他候选（${otherCandidates.length}）</summary><div>${otherCandidates.map(item => `<button type="button" data-pick-candidate="${index}" data-word="${esc(item.word)}">${esc(item.word)} · ${correctionPercent(item.score)}</button>`).join("")}</div></details>`
+        : "";
+      const actions = `<div class="image-correction-actions">
+        ${hasAlternative ? `<button type="button" data-apply-correction="${index}">采用建议</button>` : ""}
+        ${row.autoCorrected ? `<button type="button" data-revert-correction="${index}">还原 OCR</button>` : ""}
+        ${row.dictionaryMeaning && row.meaning && correction.meaning_score < 0.95 && !row.meaningFromDictionary ? `<button type="button" data-apply-meaning="${index}">采用词典释义</button>` : ""}
+        ${row.meaningFromDictionary ? `<button type="button" data-revert-meaning="${index}">还原图片释义</button>` : ""}
+      </div>`;
+      return `${visionWarning}<div class="image-correction-box ${levelClass}">
+        <span class="image-correction-badge">${stale ? "人工修改 · 待重新校对" : correctionLevelLabel(correction.level)}</span>
+        ${original}${alternative}${metrics}${dictionaryMeaning}${stale ? "" : otherCandidatesHtml}
+        <small class="image-correction-reason">${esc(correction.reason || "")}</small>
+        ${actions}
+      </div>`;
+    }
+
+    function refreshRows() {
+      const validWord = row => /^[A-Za-z][A-Za-z'-]*$/.test(String(row.word || "").trim());
+      const selected = rows.filter(row => row.selected && validWord(row));
+      const validCount = rows.filter(validWord).length;
+      const checkedCount = rows.filter(row => row.selected).length;
+      const checked = rows.filter(row => row.correction && !row.correctionStale).length;
+      $("#imageReviewSummary").textContent = `共 ${rows.length} 行 · ${validCount} 个有效单词 · ${checked}/${rows.length} 行完成校对 · ${checkedCount} 行已勾选`;
+      $("#imageSelectedCount").textContent = `已选择 ${selected.length} 个有效单词`;
+      $("#importSelectedWords").disabled = !selected.length || workerBusy || correctionBusy;
+      tbody.innerHTML = rows.map((row, index) => `
+        <tr data-row="${index}">
+          <td><input type="checkbox" class="import-row-check" data-index="${index}" ${row.selected ? "checked" : ""} aria-label="选择 ${esc(row.word)}"></td>
+          <td>
+            <div class="import-word-cell">
+              ${row.autoCorrected && !row.originalWord ? `<small>根据中文释义反向补全英文词头</small>` : row.originalWord && row.originalWord.toLowerCase() !== String(row.word).toLowerCase() ? `<small>AI 原始识别：${esc(row.originalWord)} ${row.autoCorrected ? "→ 词典建议" : ""}</small>` : ""}
+              <input class="import-word-input" data-field="word" data-index="${index}" value="${esc(row.word)}" spellcheck="false" placeholder="英文单词">
+            </div>
+          </td>
+          <td><input class="import-meaning-input" data-field="meaning" data-index="${index}" value="${esc(row.meaning)}" placeholder="中文释义"></td>
+          <td>${correctionMarkup(row, index)}</td>
+          <td><button type="button" class="import-row-delete" data-delete="${index}" title="删除此行" aria-label="删除第 ${index + 1} 行">×</button></td>
+        </tr>
+      `).join("");
+      tbody.querySelectorAll(".import-row-check").forEach(input => input.addEventListener("change", () => {
+        rows[Number(input.dataset.index)].selected = input.checked;
+        refreshRows();
+      }));
+      tbody.querySelectorAll(".import-word-input, .import-meaning-input").forEach(input => input.addEventListener("input", () => {
+        const row = rows[Number(input.dataset.index)];
+        row[input.dataset.field] = input.value;
+        row.userEdited = true;
+        if (row.correction) row.correctionStale = true;
+        const wordInput = tbody.querySelector(`.import-word-input[data-index="${input.dataset.index}"]`);
+        if (wordInput) wordInput.classList.toggle("invalid", !validWord(row));
+        const validSelected = rows.filter(item => item.selected && validWord(item)).length;
+        $("#imageSelectedCount").textContent = `已选择 ${validSelected} 个有效单词`;
+        $("#importSelectedWords").disabled = !validSelected || workerBusy || correctionBusy;
+      }));
+      tbody.querySelectorAll("[data-delete]").forEach(button => button.addEventListener("click", () => {
+        rows.splice(Number(button.dataset.delete), 1);
+        refreshRows();
+      }));
+      tbody.querySelectorAll("[data-apply-correction]").forEach(button => button.addEventListener("click", () => {
+        const row = rows[Number(button.dataset.applyCorrection)];
+        if (!row?.suggestionWord) return;
+        if (!row.originalWord) row.originalWord = row.word;
+        row.word = row.suggestionWord;
+        row.autoCorrected = true;
+        row.userEdited = false;
+        refreshRows();
+      }));
+      tbody.querySelectorAll("[data-revert-correction]").forEach(button => button.addEventListener("click", () => {
+        const row = rows[Number(button.dataset.revertCorrection)];
+        if (!row?.originalWord) return;
+        row.word = row.originalWord;
+        row.autoCorrected = false;
+        row.userEdited = true;
+        refreshRows();
+      }));
+      tbody.querySelectorAll("[data-apply-meaning]").forEach(button => button.addEventListener("click", () => {
+        const row = rows[Number(button.dataset.applyMeaning)];
+        if (!row?.dictionaryMeaning) return;
+        if (row.originalMeaning === undefined) row.originalMeaning = row.meaning;
+        row.meaning = row.dictionaryMeaning;
+        row.meaningFromDictionary = true;
+        refreshRows();
+      }));
+      tbody.querySelectorAll("[data-revert-meaning]").forEach(button => button.addEventListener("click", () => {
+        const row = rows[Number(button.dataset.revertMeaning)];
+        if (!row || row.originalMeaning === undefined) return;
+        row.meaning = row.originalMeaning;
+        row.meaningFromDictionary = false;
+        refreshRows();
+      }));
+      tbody.querySelectorAll("[data-pick-candidate]").forEach(button => button.addEventListener("click", () => {
+        const row = rows[Number(button.dataset.pickCandidate)];
+        const candidate = button.dataset.word || "";
+        if (!row || !candidate) return;
+        if (row.originalWord === undefined) row.originalWord = row.word;
+        row.word = candidate;
+        row.suggestionWord = candidate;
+        row.autoCorrected = true;
+        row.userEdited = false;
+        refreshRows();
+      }));
+    }
+
+    let correctionBusy = false;
+
+    async function runBilingualCorrection() {
+      if (!rows.length || correctionBusy) return;
+      correctionBusy = true;
+      const snapshot = rows.map(row => ({ word: row.word, meaning: row.meaning }));
+      $("#imageCorrectionStatus").textContent = "正在进行中英文双向模糊检索…";
+      refreshRows();
+      try {
+        const data = await api("/api/image-import/correct", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: snapshot })
+        });
+        let fixed = 0;
+        (data.results || []).forEach((result, index) => {
+          const row = rows[index];
+          const original = snapshot[index];
+          if (!row || !original) return;
+          // Do not overwrite a value the user edited while the request was running.
+          if (row.word !== original.word || row.meaning !== original.meaning) return;
+          row.originalWord = row.originalWord ?? original.word;
+          row.originalMeaning = row.originalMeaning ?? original.meaning;
+          row.suggestionWord = result.suggested_word || "";
+          row.dictionaryMeaning = result.dictionary_meaning || "";
+          row.correction = result;
+          row.correctionStale = false;
+          if (result.auto_correct && result.suggested_word) {
+            row.word = result.suggested_word;
+            row.autoCorrected = true;
+            fixed += 1;
+          }
+        });
+        const done = rows.filter(row => row.correction).length;
+        $("#imageCorrectionStatus").textContent = `双向检索完成：${done} 行已核对，自动修复 ${fixed} 处；请检查建议、词典释义和原图。`;
+        status(`双语校对完成：核对 ${done} 行，建议修复 ${fixed} 处`);
+      } catch (error) {
+        $("#imageCorrectionStatus").textContent = `双语校对暂不可用：${error.message}。仍可手动修改并导入。`;
+        status(`双语校对失败：${error.message}`);
+      } finally {
+        correctionBusy = false;
+        refreshRows();
+      }
+    }
+
+    function setRows(nextRows) {
+      rows = nextRows.map(item => {
+        const word = normalizeOcrWord(item.word);
+        const meaning = String(item.meaning || "").trim();
+        return {
+          word,
+          meaning,
+          originalWord: word,
+          originalMeaning: meaning,
+          recognitionUncertain: Boolean(item.uncertain),
+          recognitionNote: String(item.note || ""),
+          selected: true,
+          autoCorrected: false,
+          userEdited: false
+        };
+      }).filter(item => item.word || item.meaning);
+      review.hidden = false;
+      refreshRows();
+      review.scrollIntoView({ behavior: "smooth", block: "start" });
+      runBilingualCorrection();
+    }
+
+    fileInput.addEventListener("change", () => { setImage(fileInput.files?.[0]); fileInput.value = ""; });
+    $("#replaceImage").addEventListener("click", () => fileInput.click());
+    ["dragenter", "dragover"].forEach(type => dropzone.addEventListener(type, event => {
+      event.preventDefault(); dropzone.classList.add("dragging");
+    }));
+    ["dragleave", "drop"].forEach(type => dropzone.addEventListener(type, event => {
+      event.preventDefault(); dropzone.classList.remove("dragging");
+    }));
+    dropzone.addEventListener("drop", event => setImage(event.dataTransfer?.files?.[0]));
+
+    function uploadImageForServerOCR(formData) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/image-import/recognize");
+        xhr.upload.addEventListener("progress", event => {
+          if (event.lengthComputable) {
+            const percent = 8 + (event.loaded / event.total) * 27;
+            progressUpdate("正在上传图片到词典服务器…", percent, `已上传 ${(event.loaded / event.total * 100).toFixed(0)}%`);
+          }
+        });
+        xhr.upload.addEventListener("load", () => {
+          progressUpdate("图片已上传，Gemma 4 正在读取整张表格…", 42, "正在等待本机 Ollama 完成视觉理解和结构化转录。首次调用可能需要加载模型，请稍候。");
+        });
+        xhr.addEventListener("load", () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText || "{}"); } catch {}
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(data);
+          } else {
+            reject(new Error(data.detail || `服务器返回 HTTP ${xhr.status}`));
+          }
+        });
+        xhr.addEventListener("error", () => reject(new Error("无法连接词典服务器，请确认 FastAPI 正在运行。")));
+        xhr.addEventListener("abort", () => reject(new Error("图片识别请求已取消。")));
+        xhr.send(formData);
+      });
+    }
+
+    $("#recognizeImage").addEventListener("click", async () => {
+      if (!selectedFile || workerBusy) return;
+      workerBusy = true;
+      progress.hidden = false;
+      review.hidden = true;
+      $("#recognizeImage").disabled = true;
+      progressUpdate("正在准备上传…", 4, "图片将上传到运行词典的电脑，由本机 Ollama + Gemma 4 处理；不会发送给第三方 AI 服务。");
+      try {
+        const formData = new FormData();
+        formData.append("file", selectedFile, selectedFile.name || "vocabulary-image.jpg");
+        const data = await uploadImageForServerOCR(formData);
+        const parsed = Array.isArray(data.rows) ? data.rows : [];
+        progressUpdate("Gemma 4 识别完成", 100, `${data.engine || "Ollama · Gemma 4"} · ${data.model || ""} · 识别 ${data.row_count ?? parsed.length} 行，其中 ${data.uncertain_count ?? 0} 行被标记为不确定。`);
+        if (!parsed.length) throw new Error("Gemma 4 没有识别到有效内容，请换一张更清晰、完整且文字无遮挡的照片。");
+        setRows(parsed);
+        status(`Gemma 4 识别完成：${parsed.length} 行待双语校对`);
+      } catch (error) {
+        progressUpdate("识别未完成", 100, error.message || "请尝试重新识别或使用手动录入。");
+        status(`图片识别失败：${error.message}`);
+        console.error(error);
+      } finally {
+        workerBusy = false;
+        $("#recognizeImage").disabled = false;
+        if (!review.hidden) refreshRows();
+      }
+    });
+
+    $("#parseManualLines").addEventListener("click", () => {
+      const text = $("#manualWordLines").value;
+      const parsed = text.split(/\r?\n/).map(line => {
+        const parts = line.split(/\t|\s{2,}/, 2);
+        return { word: parts[0] || "", meaning: parts[1] || "" };
+      }).filter(item => item.word.trim() || item.meaning.trim());
+      if (!parsed.length) {
+        status("请先粘贴或输入单词，每行一个");
+        return;
+      }
+      setRows(parsed);
+      status(`已整理 ${parsed.length} 行，检查后即可导入`);
+    });
+
+    $("#addImportRow").addEventListener("click", () => {
+      rows.push({ word: "", meaning: "", originalWord: "", originalMeaning: "", selected: true, autoCorrected: false });
+      refreshRows();
+      const input = tbody.querySelector(`.import-word-input[data-index="${rows.length - 1}"]`);
+      input?.focus();
+    });
+
+    $("#rerunImageCorrection").addEventListener("click", () => {
+      rows.forEach(row => { row.correction = null; row.correctionStale = false; row.suggestionWord = ""; row.dictionaryMeaning = ""; });
+      runBilingualCorrection();
+    });
+
+    $("#selectAllImportRows").addEventListener("click", () => {
+      const allSelected = rows.length && rows.every(row => row.selected);
+      rows.forEach(row => { row.selected = !allSelected; });
+      $("#selectAllImportRows").textContent = allSelected ? "全选" : "取消全选";
+      refreshRows();
+    });
+
+    $("#importSelectedWords").addEventListener("click", async () => {
+      const selected = rows.filter(row => row.selected && /^[A-Za-z][A-Za-z'-]*$/.test(row.word.trim()));
+      if (!selected.length) return;
+      const words = [...new Map(selected.map(row => [row.word.trim().toLowerCase(), row.word.trim()])).values()];
+      const invalidCount = rows.filter(row => row.selected && row.word.trim() && !/^[A-Za-z][A-Za-z'-]*$/.test(row.word.trim())).length;
+      if (invalidCount && !window.confirm(`${invalidCount} 行英文单词格式不正确，将跳过这些行。继续导入 ${words.length} 个有效单词吗？`)) return;
+      const button = $("#importSelectedWords");
+      button.disabled = true;
+      button.textContent = "正在导入…";
+      try {
+        const result = await api("/api/favorites/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ words })
+        });
+        await loadFavorites();
+        const importedSet = new Set(words.map(word => word.toLowerCase()));
+        rows.forEach(row => {
+          if (importedSet.has(row.word.trim().toLowerCase())) row.selected = false;
+        });
+        refreshRows();
+        status(`导入完成：新增 ${result.created} 个，重复跳过 ${result.skipped} 个`);
+        progress.hidden = false;
+        progressUpdate("导入完成", 100, `新增 ${result.created} 个单词；重复或已存在 ${result.skipped} 个。`);
+      } catch (error) {
+        status(`导入失败：${error.message}`);
+        console.error(error);
+      } finally {
+        button.textContent = "加入生词本";
+        button.disabled = false;
+        refreshRows();
+      }
+    });
+
+    loadFavorites().catch(error => status(`生词本状态加载失败：${error.message}`));
+  }
+
   async function showList(page) {
     state.page = page;
     setSide(page);
@@ -1509,6 +2010,10 @@ function speakWord(word) {
         $("#results").innerHTML = "";
 
         $("#welcome").hidden = false;
+
+      } else if (b.dataset.page === "image-import") {
+
+        showImageImport();
 
       } else {
 
