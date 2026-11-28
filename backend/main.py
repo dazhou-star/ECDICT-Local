@@ -17,7 +17,7 @@ from .image_ocr import recognize_vocabulary_image, OCREngineUnavailable, get_vis
 from .paddle_ocr import get_paddle_status
 from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
-from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
+from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma, get_word_comparisons
 from .db import get_db, init_favorites_table, init_vocabulary_books
 from .book_mastery import initialize_books_mastery, get_overview, list_book_senses, set_sense_state, next_write_question, answer_write_question, guess_write_question, create_question, submit_answer, export_book_print
 from .mastery import set_word_unknown
@@ -939,6 +939,7 @@ def word_detail(word: str):
     result = get_word(word)
     if result is None:
         raise HTTPException(status_code=404, detail="未找到该词条")
+    result["comparisons"] = get_word_comparisons(word)
     return result
 
 @app.get("/api/random")
