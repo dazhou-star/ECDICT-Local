@@ -18,6 +18,8 @@
 
     favorites: [],
     favoriteDates: {},
+    bookWords: { read: [], write: [] },
+    bookDates: { read: {}, write: {} },
 
     history: read("lexicon-history", []),
 
@@ -147,6 +149,110 @@
 
     await loadFavorites();
     localStorage.removeItem("lexicon-favorites");
+  }
+
+  async function loadBook(mode) {
+    const data = await api(`/api/books/${mode}`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    state.bookWords[mode] = items.map(item => item.word);
+    state.bookDates[mode] = Object.fromEntries(items.map(item => [
+      item.word.toLowerCase(), item.study_date || item.added_at
+    ]));
+    const count = document.getElementById(mode === "read" ? "readBookCount" : "writeBookCount");
+    if (count) count.textContent = items.length;
+    return items;
+  }
+
+  async function initializeVocabularyBooks() {
+    const legacy = read("lexicon-favorites", []);
+    if (!Array.isArray(legacy)) throw new Error("旧生词本数据格式异常，未清理本地数据");
+    if (legacy.length) {
+      await api("/api/books/read/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ words: legacy })
+      });
+    }
+    await Promise.all([loadBook("read"), loadBook("write")]);
+    localStorage.removeItem("lexicon-favorites");
+  }
+
+  function isInBook(mode, word) {
+    return (state.bookWords[mode] || []).some(
+      saved => saved.toLowerCase() === String(word).toLowerCase()
+    );
+  }
+
+  async function toggleBookWord(mode, word) {
+    const saved = isInBook(mode, word);
+    try {
+      if (saved) {
+        await api(`/api/books/${mode}/${encodeURIComponent(word)}`, { method: "DELETE" });
+      } else {
+        await api(`/api/books/${mode}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ word })
+        });
+      }
+      await loadBook(mode);
+      await showWord(word);
+      status(saved
+        ? `已从${mode === "read" ? "读" : "写"}单词本移除 ${word}`
+        : `已加入${mode === "read" ? "读" : "写"}单词本：${word}`);
+    } catch (error) {
+      status("单词本操作失败：" + error.message);
+    }
+  }
+
+  async function showBook(mode) {
+    const page = mode === "read" ? "read-book" : "write-book";
+    state.page = page;
+    setSide(page);
+    hideSuggestions();
+    $("#welcome").hidden = true;
+    $("#empty").hidden = true;
+    const title = mode === "read" ? "读单词本" : "写单词本";
+    const subtitle = mode === "read"
+      ? "用于阅读理解：看到英文时能够理解中文含义。此单词本不安排读方向测验。"
+      : "用于主动输出：看到中文释义时能够写出对应英文。后续写词测验与复习将在此单词本中进行。";
+    $("#results").innerHTML = `
+      <section class="collection-panel">
+        <header class="collection-header">
+          <div class="collection-heading"><div class="collection-kicker">${mode.toUpperCase()} VOCABULARY</div><h2>${title}</h2><p>${subtitle}</p></div>
+          <div class="collection-total"><strong>${state.bookWords[mode].length}</strong><span>个单词</span></div>
+        </header>
+        <div class="collection-toolbar">
+          <label class="collection-search"><span>⌕</span><input id="bookSearch" type="search" placeholder="筛选单词…" autocomplete="off"></label>
+          <label class="collection-sort"><span>排序</span><select id="bookSort"><option value="recent">最近添加</option><option value="az">A → Z</option><option value="za">Z → A</option></select></label>
+        </div>
+        <div class="collection-summary"><span id="bookSummary"></span><span>点击单词查看释义 · 可单独从本单词本移除</span></div>
+        <div class="collection-grid" id="bookGrid"></div>
+        <div class="collection-empty collection-no-results" id="bookEmpty" hidden><h3>单词本还是空的</h3><p>查词后，可以分别将单词加入读单词本或写单词本。</p></div>
+      </section>`;
+    const search = $("#bookSearch"), sort = $("#bookSort"), grid = $("#bookGrid"), empty = $("#bookEmpty");
+    const render = () => {
+      let items = state.bookWords[mode].map(word => ({
+        word, study_date: state.bookDates[mode][word.toLowerCase()] || ""
+      })).filter(item => item.word.toLowerCase().includes(search.value.trim().toLowerCase()));
+      if (sort.value === "az") items.sort((a,b)=>a.word.localeCompare(b.word));
+      if (sort.value === "za") items.sort((a,b)=>b.word.localeCompare(a.word));
+      $("#bookSummary").textContent = `显示 ${items.length} / ${state.bookWords[mode].length} 个单词`;
+      grid.innerHTML = items.map((item,i)=>`
+        <article class="collection-word-card">
+          <button class="collection-word-open" data-open-word="${esc(item.word)}"><span class="collection-word-main"><span class="collection-word">${esc(item.word)}</span><span class="collection-word-index">${String(i+1).padStart(2,"0")}</span></span><span class="collection-word-meta">添加日期 ${esc(formatFavoriteDate(item.study_date))}</span></button>
+          <button class="collection-action remove" data-remove-word="${esc(item.word)}">移除</button>
+        </article>`).join("");
+      empty.hidden = items.length > 0;
+      grid.hidden = items.length === 0;
+      grid.querySelectorAll("[data-open-word]").forEach(b=>b.addEventListener("click",()=>showWord(b.dataset.openWord)));
+      grid.querySelectorAll("[data-remove-word]").forEach(b=>b.addEventListener("click",async()=>{
+        b.disabled=true;
+        try { await api(`/api/books/${mode}/${encodeURIComponent(b.dataset.removeWord)}`,{method:"DELETE"}); await loadBook(mode); render(); }
+        catch(e){b.disabled=false;status("移除失败："+e.message);}
+      }));
+    };
+    search.addEventListener("input",render); sort.addEventListener("change",render); render();
   }
 
   function isSaved(word) {
@@ -1046,9 +1152,10 @@ function speakWord(word) {
               <button class="sound" id="speak">🔊 发音</button>
             </div>
           </div>
-          <button class="save ${isSaved(word) ? "saved" : ""}" id="save">
-            ${isSaved(word) ? "★ 已收藏" : "☆ 加入生词本"}
-          </button>
+          <div class="book-save-actions">
+            <button class="save ${isInBook("read", word) ? "saved" : ""}" data-book-save="read">${isInBook("read", word) ? "✓ 已在读本" : "＋ 读单词本"}</button>
+            <button class="save ${isInBook("write", word) ? "saved" : ""}" data-book-save="write">${isInBook("write", word) ? "✓ 已在写本" : "＋ 写单词本"}</button>
+          </div>
         </div>
 
         ${renderTranslation(entry.translation)}
@@ -1071,7 +1178,7 @@ function speakWord(word) {
       </article>
     `;
 
-    $("#save").addEventListener("click", () => toggleSave(word));
+    document.querySelectorAll("[data-book-save]").forEach(button => button.addEventListener("click", () => toggleBookWord(button.dataset.bookSave, word)));
     $("#speak").addEventListener("click", () => playPronunciation(entry));
     addHistory(word);
   }
@@ -1168,7 +1275,7 @@ function speakWord(word) {
           <div>
             <div class="collection-kicker">IMAGE → VOCABULARY</div>
             <h2>图片批量导入</h2>
-            <p>上传手写单词表，识别英文单词与中文释义，校对后一次性加入生词本。</p>
+            <p>上传手写单词表，识别英文单词与中文释义，校对后一次性加入读单词本。</p>
           </div>
           <div class="image-import-badge" id="imageEngineBadge">PaddleOCR CPU</div>
         </header>
@@ -1232,7 +1339,7 @@ function speakWord(word) {
           </div>
           <div class="image-review-footer">
             <span id="imageSelectedCount">已选择 0 个单词</span>
-            <button type="button" class="image-import-submit" id="importSelectedWords" disabled>加入生词本</button>
+            <button type="button" class="image-import-submit" id="importSelectedWords" disabled>加入读单词本</button>
           </div>
         </section>
       </section>
@@ -1773,7 +1880,7 @@ function speakWord(word) {
       button.disabled = true;
       button.textContent = "正在导入…";
       try {
-        const result = await api("/api/favorites/bulk", {
+        const result = await api("/api/books/read/bulk", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ items })
@@ -2031,226 +2138,6 @@ function speakWord(word) {
   });
 
 
-  async function showPrint() {
-    state.page = 'print';
-    setSide('print');
-    hideSuggestions();
-    $('#welcome').hidden = true;
-    $('#empty').hidden = true;
-    status('每周复习纸带');
-    $('#results').innerHTML = `
-      <section class="roll-print-panel roll-weekly-panel">
-        <header class="roll-print-head"><div><div class="collection-kicker">WEEKLY REVIEW STRIP</div><h2>每周复习纸带</h2><p>自动均衡安排下周周日至周五；周六留作补做日</p></div><b>80 mm</b></header>
-        <div class="roll-print-controls">
-          <a class="roll-print-link" href="/print" target="_blank" rel="noopener">打开纯纸条页面 ↗</a>
-          <button id="printRoll" class="roll-print-primary">系统打印</button>
-          <span id="printStatus">正在生成复习计划…</span>
-        </div>
-        <div id="printSheet" class="roll-print-sheet"></div>
-      </section>`;
-    const sheet = $('#printSheet');
-    const statusEl = $('#printStatus');
-    function printForms(value, baseWord) {
-      const forms = parseExchange(value);
-      const byCode = Object.fromEntries(forms.map(item => [item.code, item.word]));
-      const irregular = getIrregularForms(baseWord, byCode);
-      const doubled = getDoubledVerbForms(baseWord, byCode);
-      const labels = { p: '过去式', d: '过去分词', i: '现在分词', '3': '第三人称单数' };
-      const selected = ['p', 'd', 'i', '3'].filter(code =>
-        byCode[code] && (irregular.includes(code) || doubled.includes(code))
-      );
-      if (!selected.length) return '';
-      return `<div class="roll-word-forms">${selected.map(code => {
-        const isIrregular = irregular.includes(code);
-        return `<span><em>${labels[code]}</em>${esc(byCode[code])}<small>${isIrregular ? '不规则' : '双写'}</small></span>`;
-      }).join('')}</div>`;
-    }
-    function render(data) {
-      let html = `<h2>每周复习纸带</h2><p class="roll-week-range">${esc(data.week_start)} — ${esc(data.week_end)}</p>`;
-      let questionNo = 0;
-      const answerRows = [];
-      data.days.forEach(day => {
-        html += `<section class="roll-day"><h3>${esc(day.label)}　${esc(day.date)}</h3>`;
-        if (!day.words.length && !day.exercises.length) {
-          html += '<p class="roll-empty-day">当天没有安排复习</p></section>';
-          return;
-        }
-        if (day.words.length) {
-          html += `<h4>复习单词（${day.words.length}）</h4>`;
-          html += day.words.map((w,i) => `<article class="roll-word"><b>${i+1}. ${esc(w.word)}</b>${w.phonetic ? `<small>${esc(w.phonetic)}</small>` : ''}<div>${esc(w.pos || '')}</div><p>${esc(w.translation || '暂无中文释义')}</p>${printForms(w.exchange,w.word)}</article>`).join('');
-        }
-        if (day.exercises.length) {
-          html += `<h4>检测练习（${day.exercises.length}题）</h4>`;
-          html += day.exercises.map(q => {
-            questionNo++;
-            answerRows.push(`<p class="roll-answer-key">${questionNo}. ${esc(day.label)} · ${esc(q.word)}：${'ABCD'[q.answer]} — ${esc(q.meaning)}</p>`);
-            return `<article class="roll-question"><b>${questionNo}. ${esc(q.word)}</b><ol type="A">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol><p>作答： □ A　□ B　□ C　□ D</p></article>`;
-          }).join('');
-        }
-        html += '</section>';
-      });
-      html += `<section class="roll-answer-section"><h3>本周答案区</h3>${answerRows.join('') || '<p>本周暂无练习题</p>'}</section><p class="roll-print-end">— LEXICON · END —</p>`;
-      sheet.innerHTML = html;
-      const daily = (data.counts.daily_word_counts || []).join(' / ');
-      statusEl.textContent = `已安排 ${data.counts.words} 个单词、${data.counts.exercises} 道练习；每日单词数：${daily}；${data.counts.skipped_exercises} 个片段因干扰项不足未生成题目。`;
-    }
-    (async () => {
-      try {
-        const data = await api('/api/print/data');
-        render(data);
-        $('#printRoll').disabled = data.counts.words === 0;
-        if (!data.counts.words) statusEl.textContent = '下周没有已安排的复习内容。';
-      } catch (e) { statusEl.textContent = '生成失败：' + e.message; }
-    })();
-    $('#printRoll').addEventListener('click', () => {
-      if (!sheet.innerHTML.trim()) return;
-      document.body.classList.add('printing-roll');
-      window.addEventListener('afterprint', () => document.body.classList.remove('printing-roll'), { once: true });
-      window.print();
-      setTimeout(() => document.body.classList.remove('printing-roll'), 1500);
-    });
-  }
-
-  async function showMastery() {
-    state.page = "mastery";
-    setSide("mastery");
-    hideSuggestions();
-    $("#welcome").hidden = true;
-    $("#empty").hidden = true;
-    status("单词掌握检测");
-    $("#results").innerHTML = `
-      <section class="mastery-panel">
-        <header class="mastery-head"><div><div class="collection-kicker">READING MASTERY</div><h2>单词掌握检测</h2><p>按义项独立追踪掌握程度；每次从该义项的解释片段中抽题。</p></div></header>
-        <div class="mastery-stats" id="masteryStats">正在读取学习状态…</div>
-        <div class="mastery-actions">
-          <button class="mastery-primary" id="prepareMastery">生成 / 更新学习数据</button>
-          <button class="mastery-secondary" id="startMastery">开始检测</button>
-        </div>
-        <div id="masteryContent"></div>
-      </section>`;
-    $("#prepareMastery").addEventListener("click", async () => {
-      try {
-        const d = await api("/api/mastery/prepare", {method:"POST"});
-        await refreshMasteryStats();
-        const activated = d.activated_senses ?? d.created_senses ?? 0;
-        $("#masteryContent").innerHTML = '<p class="mastery-empty">学习数据已生成，义项已自动启用。系统会随机抽取各义项中的不同中文解释进行检测，无需人工校对。</p>';
-        status(`生成完成：新增 ${d.created_words} 个单词、${d.created_senses} 个义项，启用 ${activated} 个义项`);
-      } catch(e) { status("生成失败："+e.message); }
-    });
-    $("#startMastery").addEventListener("click", nextMasteryQuestion);
-    await refreshMasteryStats();
-  }
-
-  async function refreshMasteryStats() {
-    const d = await api("/api/mastery/overview");
-    const el = $("#masteryStats");
-    if (!el) return;
-    el.innerHTML = [
-      ["生词本单词",d.favorites],["已拆分义项",d.senses],["待处理",d.drafts],
-      ["已启用",d.active],["今日到期",d.due],["累计检测",d.tests]
-    ].map(([k,v]) => `<div><span>${esc(k)}</span><b>${Number(v).toLocaleString()}</b></div>`).join("");
-  }
-
-  async function showSenseReview() {
-    const data = await api("/api/mastery/senses?state=draft");
-    const target = $("#masteryContent");
-    if (!target) return;
-    if (!data.items.length) {
-      target.innerHTML = '<p class="mastery-empty">没有待校对义项。你可以重新生成；已存在的校对结果不会被覆盖。</p>';
-      return;
-    }
-    target.innerHTML = `
-      <div class="mastery-subhead"><h3>待校对义项（${data.items.length}）</h3><span>自动拆分仅作初稿，确认后才参与检测</span></div>
-      <div class="sense-list">${data.items.map(item => `
-        <article class="sense-card" data-sense-id="${item.id}">
-          <div class="sense-word"><b>${esc(item.word)}</b><span>${esc(item.pos || "未标注词性")}</span></div>
-          <div class="sense-fragments">${(item.fragments || "").split("；").filter(Boolean).map((x,i)=>`<span><input class="fragment-correction" data-fragment-index="${i}" value="${esc(x)}" maxlength="160"><button class="fragment-save" data-fragment-index="${i}">保存</button><button class="fragment-split" data-fragment-index="${i}">拆为新义项</button></span>`).join("")}</div>
-          <div class="sense-source">原始释义：${esc(item.source_translation || "")}</div>
-          <div class="sense-edit"><input class="new-fragment" maxlength="160" placeholder="添加或修正一个解释片段"><button data-sense-action="add">添加片段</button></div>
-          <div class="sense-buttons"><button data-sense-action="active">确认并启用</button><button data-sense-action="ignored">暂不学习</button></div>
-        </article>`).join("")}</div>`;
-    target.querySelectorAll("[data-fragment-index]").forEach(button => {
-      if (button.tagName !== "BUTTON") return;
-      button.addEventListener("click", async () => {
-        const card = button.closest("[data-sense-id]");
-        const id = card.dataset.senseId;
-        const index = Number(button.dataset.fragmentIndex);
-        const input = card.querySelector(`.fragment-correction[data-fragment-index="${index}"]`);
-        try {
-          await api(`/api/mastery/senses/${id}/fragments/${index}`, {
-            method:"PATCH", headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({fragment:input.value.trim()})
-          });
-          status("解释片段已更新");
-          await showSenseReview();
-        } catch(e) { status("片段修改失败："+e.message); }
-      });
-    });
-    target.querySelectorAll(".fragment-split").forEach(button => button.addEventListener("click", async () => {
-      const card = button.closest("[data-sense-id]");
-      const id = card.dataset.senseId;
-      const index = Number(button.dataset.fragmentIndex);
-      if (!window.confirm("将这个解释片段独立为一个新义项？")) return;
-      try {
-        await api(`/api/mastery/senses/${id}/fragments/${index}/split`, {method:"POST"});
-        await showSenseReview();
-        status("已拆分为独立义项");
-      } catch(e) { status("拆分失败："+e.message); }
-    }));
-    target.querySelectorAll("[data-sense-action]").forEach(button => button.addEventListener("click", async () => {
-      const card = button.closest("[data-sense-id]");
-      const id = card.dataset.senseId;
-      try {
-        if (button.dataset.senseAction === "add") {
-          const input = card.querySelector(".new-fragment");
-          if (!input.value.trim()) return;
-          await api(`/api/mastery/senses/${id}/fragments`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fragment:input.value.trim()})});
-          await showSenseReview();
-        } else {
-          await api(`/api/mastery/senses/${id}`, {method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:button.dataset.senseAction})});
-          await refreshMasteryStats();
-          await showSenseReview();
-        }
-      } catch(e) { status("义项操作失败："+e.message); }
-    }));
-  }
-
-  async function nextMasteryQuestion() {
-    const target = $("#masteryContent");
-    target.innerHTML = '<p class="mastery-empty">正在抽取到期义项…</p>';
-    try {
-      const qdata = await api("/api/mastery/question");
-      if (qdata.done) {
-        target.innerHTML = `<div class="mastery-empty"><h3>${qdata.message || "今日到期义项已完成"}</h3><p>${qdata.next_review_date ? "下次复习日期："+esc(qdata.next_review_date) : "请先生成学习数据，再开始检测。"}</p></div>`;
-        await refreshMasteryStats();
-        return;
-      }
-      target.innerHTML = `
-        <article class="quiz-card">
-          <div class="quiz-meta">读模式 · 困难模式 · 选择最符合的中文含义 · ${esc(qdata.pos || "")}</div>
-          <h3>${esc(qdata.word)}</h3>
-          <p>这个单词在当前义项中表示：</p>
-          <div class="quiz-options">${qdata.options.map((option,i)=>`<button data-answer-index="${i}"><span>${String.fromCharCode(65+i)}</span><div class="quiz-option-text">${esc(option)}</div></button>`).join("")}</div>
-          <div id="quizFeedback"></div>
-          <button class="mastery-secondary quiz-next" id="nextQuiz" hidden>下一题</button>
-        </article>`;
-      target.querySelectorAll("[data-answer-index]").forEach(button => button.addEventListener("click", async () => {
-        if (button.disabled) return;
-        target.querySelectorAll("[data-answer-index]").forEach(x=>x.disabled=true);
-        const answer=qdata.options[Number(button.dataset.answerIndex)];
-        try {
-          const result=await api("/api/mastery/answer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question_id:qdata.question_id,answer})});
-          $("#quizFeedback").innerHTML = `<div class="quiz-result ${result.correct?"correct":"wrong"}"><b>${result.correct?"回答正确":"回答错误"}</b><p>正确释义：${esc(result.correct_answer)}</p><small>连续答对：${result.streak} 次 · 下次复习：${esc(result.next_review_date)}（${result.interval_days} 天后）</small></div>`;
-          $("#nextQuiz").hidden=false;
-          $("#nextQuiz").addEventListener("click",nextMasteryQuestion,{once:true});
-          await refreshMasteryStats();
-        } catch(e) { $("#quizFeedback").textContent="提交失败："+e.message; }
-      }));
-    } catch(e) {
-      target.innerHTML=`<p class="mastery-empty">检测暂不可用：${esc(e.message)}</p>`;
-    }
-  }
-
   q.addEventListener("input", () => {
 
     clearTimeout(state.timer);
@@ -2465,8 +2352,8 @@ function speakWord(word) {
 
 
 
-  initializeFavorites().catch(e => {
-    status(`生词本同步失败：${e.message}`);
+  initializeVocabularyBooks().catch(e => {
+    status(`单词本同步失败：${e.message}`);
     console.error("生词本同步失败：", e);
   });
 
