@@ -19,7 +19,6 @@ from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table, init_vocabulary_books
-from .mastery import init_mastery_tables, prepare_favorites, list_senses, set_sense_state, add_fragment, update_fragment_by_order, update_fragment, split_fragment_to_sense, create_question, submit_answer, overview, export_print_data
 
 class VocabularyBookRequest(BaseModel):
     word: str
@@ -367,7 +366,6 @@ app = FastAPI(
 def startup_initialize_database():
     init_favorites_table()
     init_vocabulary_books()
-    init_mastery_tables()
 
 @app.get("/api/health")
 def health():
@@ -835,106 +833,6 @@ def remove_favorite(word: str):
     return {"ok": True, "deleted": cursor.rowcount > 0}
 
 
-
-class SenseStateRequest(BaseModel):
-    state: str
-
-class SenseFragmentRequest(BaseModel):
-    fragment: str
-
-class SenseFragmentUpdateRequest(BaseModel):
-    fragment: str
-
-class MasteryAnswerRequest(BaseModel):
-    question_id: str
-    answer: str
-
-@app.post("/api/mastery/prepare")
-def mastery_prepare():
-    return {"ok": True, **prepare_favorites()}
-
-@app.get("/api/mastery/overview")
-def mastery_overview():
-    return overview()
-
-@app.get("/api/mastery/senses")
-def mastery_senses(state: str = Query("draft", pattern="^(draft|active|ignored|all)$")):
-    return {"items": list_senses(state)}
-
-@app.patch("/api/mastery/senses/{sense_id}")
-def mastery_update_sense(sense_id: int, payload: SenseStateRequest):
-    try:
-        result = set_sense_state(sense_id, payload.state)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=404, detail="找不到义项")
-    return {"ok": True, **result}
-
-@app.post("/api/mastery/senses/{sense_id}/fragments")
-def mastery_add_fragment(sense_id: int, payload: SenseFragmentRequest):
-    try:
-        result = add_fragment(sense_id, payload.fragment)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=404, detail="找不到义项")
-    return result
-
-
-@app.patch("/api/mastery/fragments/{fragment_id}")
-def mastery_update_fragment(fragment_id: int, payload: SenseFragmentUpdateRequest):
-    try:
-        result = update_fragment(fragment_id, payload.fragment)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=404, detail="找不到解释片段")
-    return result
-
-
-@app.patch("/api/mastery/senses/{sense_id}/fragments/{source_order}")
-def mastery_correct_fragment(sense_id: int, source_order: int, payload: SenseFragmentRequest):
-    try:
-        result = update_fragment_by_order(sense_id, source_order, payload.fragment)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=404, detail="找不到解释片段")
-    return result
-
-
-@app.post("/api/mastery/senses/{sense_id}/fragments/{source_order}/split")
-def mastery_split_fragment(sense_id: int, source_order: int):
-    result = split_fragment_to_sense(sense_id, source_order)
-    if result is None:
-        raise HTTPException(status_code=404, detail="找不到待校对义项或解释片段")
-    return result
-
-@app.get("/api/print/data")
-def print_data():
-    return export_print_data()
-
-@app.get("/print")
-def print_page():
-    path = FRONTEND_DIR / "print.html"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="纸带页面文件缺失")
-    return FileResponse(path)
-
-@app.get("/api/mastery/question")
-def mastery_question():
-    return create_question()
-
-@app.post("/api/mastery/answer")
-def mastery_answer(payload: MasteryAnswerRequest):
-    try:
-        result = submit_answer(payload.question_id, payload.answer)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=404, detail="题目不存在或已失效")
-    return result
 
 @app.get("/api/word/{word}")
 def word_detail(word: str):
