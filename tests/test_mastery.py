@@ -1,6 +1,10 @@
 import unittest
 
-from backend.mastery import split_translation, _too_similar_meaning, _pos_family
+from backend.mastery import (
+    split_translation, _too_similar_meaning, _pos_family,
+    _clean_fragment, _split_translation_for_distractors,
+    _is_excluded_distractor_sense,
+)
 
 
 class TranslationSplitTests(unittest.TestCase):
@@ -48,6 +52,30 @@ class TranslationSplitTests(unittest.TestCase):
 
 
 class DistractorQualityTests(unittest.TestCase):
+    def test_punctuation_residue_is_removed(self):
+        self.assertEqual(_clean_fragment("，木材；"), "木材")
+        self.assertEqual(_clean_fragment("西)艾森曼"), "西艾森曼")
+        self.assertEqual(_clean_fragment("（木材）"), "（木材）")
+        self.assertEqual(_clean_fragment("木材）"), "木材")
+
+    def test_distractor_parser_preserves_domain_and_language_markers(self):
+        parsed = _split_translation_for_distractors(
+            "n. 木材；[化] 化学反应；[日] 日语借词；[美] 美国英语用法"
+        )
+        self.assertIn(("", "木材", ""), parsed)
+        self.assertIn(("", "化学反应", "化"), parsed)
+        self.assertIn(("", "日语借词", "日"), parsed)
+        self.assertIn(("", "美国英语用法", "美"), parsed)
+
+    def test_hard_exclusions_are_applied_to_senses_not_entire_entry(self):
+        self.assertTrue(_is_excluded_distractor_sense("化学反应", "化"))
+        self.assertTrue(_is_excluded_distractor_sense("计算机术语", "计"))
+        self.assertTrue(_is_excluded_distractor_sense("日语借词", "日"))
+        self.assertTrue(_is_excluded_distractor_sense("某人姓氏", ""))
+        self.assertTrue(_is_excluded_distractor_sense("普通释义", "", {"name"}))
+        self.assertFalse(_is_excluded_distractor_sense("木材", ""))
+        self.assertFalse(_is_excluded_distractor_sense("美国英语用法", "美"))
+
     def test_near_synonym_options_are_flagged_as_too_similar(self):
         self.assertTrue(_too_similar_meaning("特征", "特点"))
         self.assertTrue(_too_similar_meaning("特征", "特性"))
