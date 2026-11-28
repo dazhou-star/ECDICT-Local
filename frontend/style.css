@@ -674,3 +674,11 @@ body.dark .definition-text{font-weight:500}
 .collection-action.unknown-active{border:1px solid #d69b53;border-radius:7px;padding:6px 9px;background:#fff3df;color:#9b641d;font-size:10px}
 body.dark .collection-action.unknown-active{background:#49351f;color:#f0c17b;border-color:#80603a}
 body.dark .mark-unknown{background:var(--panel2);color:var(--muted);border-color:var(--line)}
+
+
+/* Word comparison material from the local ECDICT resemble.txt source */
+.comparison-list{display:grid;gap:14px}
+.comparison-item{padding:15px 17px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.comparison-words{font-weight:750;color:var(--text);margin-bottom:8px;font-size:14px}
+.comparison-content{white-space:pre-wrap;line-height:1.85;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.suggestion-match{display:inline-block;margin-right:5px;padding:1px 5px;border-radius:4px;background:rgba(210,157,77,.16);color:#bd8336;font-style:normal;font-size:10px}
