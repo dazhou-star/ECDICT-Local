@@ -1050,7 +1050,7 @@ body.dark .image-correction-alternatives button:hover { background: #243a58; }
 .roll-print-modes button.active,.roll-print-primary { border-color:var(--blue) !important; background:var(--blue) !important; color:#fff !important; }
 .roll-print-controls > p { flex-basis:100%; margin:0; }
 #printStatus { flex-basis:100%; color:var(--muted); font-size:10px; }
-.roll-print-sheet { width:100%; max-width:430px; margin:0 auto; padding:18px 15px; border:1px solid #ddd; background:#fff; color:#111; box-shadow:0 5px 24px #00000012; font-family:Arial,"Microsoft YaHei",sans-serif; font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+.roll-print-sheet { width:100%; max-width:430px; margin:0 auto; padding:18px 15px; border:1px solid #ddd; background:#fff; color:#111; box-shadow:0 5px 24px #00000012; font-family:Inter,"MiSans","HarmonyOS Sans SC","Noto Sans SC","Source Han Sans SC","Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif; font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
 .roll-print-sheet h2 { margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #111; font-size:17px; text-align:center; }
 .roll-print-sheet h3 { margin:17px 0 9px; padding:5px 0; border-bottom:1px solid #555; font-size:14px; }
 .roll-word { padding:9px 0 11px; border-bottom:1px dashed #999; break-inside:avoid; }
