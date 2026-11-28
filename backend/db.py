@@ -62,3 +62,32 @@ def init_favorites_table():
             """
         )
         conn.commit()
+
+
+
+def init_vocabulary_books():
+    """Create independent read/write vocabulary books and migrate legacy favorites to read."""
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vocabulary_books (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT NOT NULL COLLATE NOCASE,
+                mode TEXT NOT NULL CHECK(mode IN ('read', 'write')),
+                added_at TEXT NOT NULL,
+                study_date TEXT NOT NULL,
+                UNIQUE(word, mode)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vocabulary_books_mode_date
+            ON vocabulary_books(mode, study_date DESC, added_at DESC)
+        """)
+        # The former single favorites collection was used for reading vocabulary.
+        # Preserve its dates and entries; never infer that old entries belong to write.
+        conn.execute("""
+            INSERT OR IGNORE INTO vocabulary_books(word, mode, added_at, study_date)
+            SELECT word, 'read', added_at,
+                   COALESCE(NULLIF(study_date, ''), substr(added_at, 1, 10))
+            FROM favorites
+        """)
+        conn.commit()
