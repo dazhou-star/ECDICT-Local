@@ -360,7 +360,8 @@ def create_question():
             )
         due_rows = conn.execute(
             """SELECT s.id, s.word, s.pos, s.sense_text, m.next_review_date, m.streak
-               FROM word_senses s JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
+               FROM word_senses s JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
+               JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
                WHERE s.review_state='active' AND m.next_review_date<=?
                ORDER BY m.next_review_date ASC, m.streak ASC, RANDOM() LIMIT 30""",
             (today,),
@@ -368,7 +369,8 @@ def create_question():
         if not due_rows:
             conn.commit()
             upcoming = conn.execute(
-                "SELECT MIN(next_review_date) FROM sense_mastery WHERE mode='read' AND next_review_date>?",
+                "SELECT MIN(m.next_review_date) FROM sense_mastery m JOIN word_senses s ON s.id=m.sense_id "
+                "JOIN favorites f ON f.word=s.word COLLATE NOCASE WHERE m.mode='read' AND m.next_review_date>?",
                 (today,),
             ).fetchone()[0]
             return {"done": True, "next_review_date": upcoming}
