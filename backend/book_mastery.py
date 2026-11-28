@@ -3,9 +3,10 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 import json
 import random
+import re
 
 from .db import get_db
-from .mastery import init_mastery_tables, split_translation, INTERVALS
+from .mastery import init_mastery_tables, split_translation, INTERVALS, POS_NAMES, _pos_family, create_question, submit_answer
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -14,6 +15,10 @@ def initialize_books_mastery():
     init_mastery_tables()
     stats = {}
     with get_db() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS write_question_progress (
+            question_id TEXT PRIMARY KEY REFERENCES mastery_questions(question_id) ON DELETE CASCADE,
+            attempts INTEGER NOT NULL DEFAULT 0
+        )""")
         rows = conn.execute(
             """SELECT b.word,b.mode,b.study_date,w.translation
                FROM vocabulary_books b JOIN words w ON w.word=b.word COLLATE NOCASE
@@ -132,9 +137,10 @@ def next_write_question():
                VALUES(?,?,?,'write',?,?,?,?)""",
             (qid,due["id"],frag["id"],frag["fragment"],due["word"],"[]",_now())
         )
+        conn.execute("INSERT INTO write_question_progress(question_id,attempts) VALUES(?,0)", (qid,))
         conn.commit()
         return {"done":False,"question_id":qid,"prompt":frag["fragment"],
-                "pos":due["pos"],"due_date":due["next_review_date"]}
+                "pos":POS_NAMES.get(due["pos"],due["pos"]),"due_date":due["next_review_date"]}
 
 def answer_write_question(question_id,answer):
     answer=(answer or "").strip()
@@ -174,6 +180,91 @@ def answer_write_question(question_id,answer):
         conn.commit()
     return {"correct":correct,"correct_answer":q["correct_answer"] if not correct else None,
             "next_review_date":next_date,"streak":streak,"interval_days":interval,"status":status}
+
+
+def _meaning_key(value):
+    return "".join(re.findall(r"[\u3400-\u9fff]", value or ""))
+
+
+def _candidate_has_prompt_meaning(conn, candidate, prompt, target_pos):
+    """Check a proposed synonym against the local ECDICT entry and POS."""
+    row = conn.execute(
+        "SELECT translation FROM words WHERE word=? COLLATE NOCASE LIMIT 1",
+        (candidate,),
+    ).fetchone()
+    if not row:
+        return False
+    target = _meaning_key(prompt)
+    if not target:
+        return False
+    target_family = _pos_family(target_pos)
+    for pos, fragments in split_translation(row["translation"] or ""):
+        if target_family and _pos_family(pos) != target_family:
+            continue
+        for fragment in fragments:
+            gloss = _meaning_key(fragment)
+            if gloss and (target == gloss or target in gloss or gloss in target):
+                return True
+    return False
+
+
+def guess_write_question(question_id, answer):
+    """Accept dictionary-supported synonyms without penalizing them, then hint toward the target."""
+    answer = (answer or "").strip()
+    if not answer:
+        raise ValueError("请输入一个英文单词")
+    with get_db() as conn:
+        q = conn.execute(
+            "SELECT q.*,s.pos FROM mastery_questions q JOIN word_senses s ON s.id=q.sense_id "
+            "WHERE q.question_id=? AND q.mode='write'",
+            (question_id,),
+        ).fetchone()
+        if not q:
+            return None
+        if q["answered_at"]:
+            raise ValueError("这道题已经提交过")
+        if answer.casefold() == q["correct_answer"].casefold():
+            exact = True
+            synonym = False
+            attempts = 0
+        else:
+            exact = False
+            synonym = _candidate_has_prompt_meaning(conn, answer, q["prompt"], q["pos"])
+            progress = conn.execute(
+                "SELECT attempts FROM write_question_progress WHERE question_id=?",
+                (question_id,),
+            ).fetchone()
+            attempts = progress["attempts"] if progress else 0
+            if synonym:
+                attempts += 1
+                conn.execute(
+                    """INSERT INTO write_question_progress(question_id,attempts) VALUES(?,?)
+                       ON CONFLICT(question_id) DO UPDATE SET attempts=excluded.attempts""",
+                    (question_id, attempts),
+                )
+                conn.commit()
+    if exact:
+        result = answer_write_question(question_id, answer)
+        return {"finished": True, "accepted_synonym": False, **(result or {})}
+    if synonym:
+        target = q["correct_answer"]
+        stage = min(attempts, 4)
+        if stage == 1:
+            hint = f"目标词首字母是 “{target[0]}”。"
+        elif stage == 2:
+            hint = f"目标词共 {len(target)} 个字母。"
+        elif stage == 3:
+            hint = f"目标词前两个字母是 “{target[:2]}”。"
+        else:
+            pattern = target[:2] + "·" * max(0, len(target)-3) + (target[-1] if len(target) > 2 else "")
+            hint = f"目标词的字母结构：{pattern}（中间部分尚未揭示）。"
+        return {
+            "finished": False, "accepted_synonym": True, "hint_stage": stage,
+            "feedback": f"“{answer}”也有“{q['prompt']}”这个意思，不算错。继续接近本题目标词！",
+            "hint": hint,
+        }
+    result = answer_write_question(question_id, answer)
+    return {"finished": True, "accepted_synonym": False, **(result or {})}
 
 def _week_range(today=None):
     today=today or date.today()
