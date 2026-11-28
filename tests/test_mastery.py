@@ -1,6 +1,6 @@
 import unittest
 
-from backend.mastery import split_translation
+from backend.mastery import split_translation, _too_similar_meaning, _pos_family
 
 
 class TranslationSplitTests(unittest.TestCase):
@@ -45,6 +45,20 @@ class TranslationSplitTests(unittest.TestCase):
         self.assertIn("投掷", groups[1][1])
         self.assertIn("掷钱币决定某事", groups[2][1])
         self.assertTrue(all(len(fragment) < 30 for _, fragments in groups for fragment in fragments))
+
+
+class DistractorQualityTests(unittest.TestCase):
+    def test_near_synonym_options_are_flagged_as_too_similar(self):
+        self.assertTrue(_too_similar_meaning("特征", "特点"))
+        self.assertTrue(_too_similar_meaning("特征", "特性"))
+
+    def test_clearly_different_meanings_are_not_flagged(self):
+        self.assertFalse(_too_similar_meaning("特征", "苹果"))
+        self.assertFalse(_too_similar_meaning("远征", "苹果"))
+
+    def test_verb_forms_share_a_pos_family(self):
+        self.assertEqual(_pos_family("vt"), _pos_family("vi"))
+        self.assertEqual(_pos_family("v"), _pos_family("vt"))
 
 
 if __name__ == "__main__":
