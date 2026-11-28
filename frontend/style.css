@@ -532,3 +532,32 @@ body.dark .word-stat-value>b {color:color-mix(in srgb,var(--stat-accent) 75%,whi
   color: var(--muted, #a1a1aa);
   line-height: 1.45;
 }
+
+
+/* ===== 单词掌握检测 ===== */
+.mastery-panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;box-shadow:var(--shadow)}
+.mastery-head h2{margin:7px 0;font-size:23px}.mastery-head p{margin:0;color:var(--muted);font-size:13px;line-height:1.7}
+.mastery-stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin:22px 0}
+.mastery-stats>div{padding:12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;min-width:0}
+.mastery-stats span{display:block;color:var(--muted);font-size:11px}.mastery-stats b{display:block;margin-top:6px;font-size:21px;font-variant-numeric:tabular-nums}
+.mastery-actions{display:flex;gap:9px;flex-wrap:wrap;padding-bottom:20px;border-bottom:1px solid var(--line)}
+.mastery-actions button,.sense-edit button,.sense-buttons button,.quiz-next{border:1px solid var(--line);border-radius:9px;padding:10px 14px;background:var(--panel2);color:var(--text);cursor:pointer;font-size:12px}
+.mastery-actions .mastery-primary,.sense-buttons button:first-child{background:#326fd1;border-color:#326fd1;color:white}
+.mastery-subhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:20px 0 12px}.mastery-subhead h3{margin:0;font-size:16px}.mastery-subhead span{font-size:11px;color:var(--muted)}
+.sense-list{display:grid;gap:11px}.sense-card{padding:16px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}
+.sense-word{display:flex;align-items:center;gap:10px}.sense-word b{font-size:18px}.sense-word span{padding:3px 7px;border-radius:6px;background:var(--panel2);color:var(--muted);font-size:11px}
+.sense-fragments{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.sense-fragments span{padding:6px 9px;border-radius:7px;background:var(--soft);color:var(--text);font-size:12px}
+.sense-source{padding:9px 0;color:var(--muted);font-size:11px;line-height:1.7;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.sense-edit{display:flex;gap:8px;margin-top:10px}.sense-edit input{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:var(--panel2);color:var(--text)}
+.sense-buttons{display:flex;gap:8px;margin-top:10px}.sense-buttons button{padding:8px 12px}
+.mastery-empty{padding:30px 10px;text-align:center;color:var(--muted);font-size:13px;line-height:1.8}
+.quiz-card{max-width:650px;margin:22px auto;padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.quiz-meta{color:var(--muted);font-size:11px}.quiz-card h3{font-size:34px;margin:14px 0 8px}.quiz-card>p{color:var(--muted);font-size:13px}
+.quiz-options{display:grid;gap:9px;margin-top:20px}.quiz-options button{display:flex;align-items:center;gap:12px;text-align:left;border:1px solid var(--line);border-radius:10px;padding:13px;background:var(--panel2);color:var(--text);cursor:pointer;font-size:14px}
+.quiz-options button:hover:not(:disabled){border-color:var(--blue);background:var(--soft)}.quiz-options button:disabled{cursor:default;opacity:.72}
+.quiz-options button span{display:grid;place-items:center;flex:0 0 25px;height:25px;border-radius:7px;background:var(--panel);color:var(--muted);font-size:11px;font-weight:700}
+.quiz-result{margin-top:16px;padding:14px;border-radius:10px;font-size:13px;line-height:1.7}.quiz-result p{margin:5px 0}.quiz-result small{color:var(--muted)}
+.quiz-result.correct{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3)}.quiz-result.wrong{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3)}
+.quiz-next{margin-top:14px}
+@media(max-width:760px){.mastery-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.mastery-panel{padding:18px}.mastery-subhead{align-items:flex-start;flex-direction:column}}
+@media(max-width:440px){.mastery-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.sense-edit{flex-direction:column}.quiz-card{padding:18px}.quiz-card h3{font-size:29px}}
