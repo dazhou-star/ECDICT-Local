@@ -91,7 +91,19 @@ def init_mastery_tables():
 def _clean_fragment(value):
     value = re.sub(r"<[^>]*>", " ", value or "")
     value = re.sub(r"^\s*\[[^]]{1,16}\]\s*", "", value)
-    value = re.sub(r"\s+", " ", value).strip(" ，,；;。")
+    value = re.sub(r"\s+", " ", value).strip()
+    # Remove punctuation fragments left behind by splitting dictionary glosses.
+    value = value.strip(" ，,；;。.!?！？:：、")
+    # Remove unmatched bracket characters without disturbing balanced examples.
+    pairs = {"(": ")", "（": "）", "[": "]", "【": "】", "{": "}"}
+    for opening, closing in pairs.items():
+        while value.count(opening) > value.count(closing):
+            index = value.rfind(opening)
+            value = value[:index] + value[index + 1:]
+        while value.count(closing) > value.count(opening):
+            index = value.find(closing)
+            value = value[:index] + value[index + 1:]
+    value = value.strip(" ，,；;。.!?！？:：、")
     return value.strip()
 
 
@@ -390,6 +402,115 @@ def _weighted_fragment(conn, sense_id):
 
 
 
+DISTRACTOR_DOMAIN_MARKERS = {
+    "化", "计", "計", "医", "醫", "生", "物", "数", "數", "地", "理",
+    "法", "经", "經", "农", "農", "航", "军", "軍", "建", "电", "電",
+    "机", "機", "纺", "紡", "矿", "礦", "气", "氣", "心", "哲", "语",
+    "語", "音", "天文", "数学", "物理", "化学", "医学", "计算机",
+}
+DISTRACTOR_LANGUAGE_MARKERS = {
+    "日", "德", "俄", "西", "意", "葡", "荷", "希", "拉", "阿",
+    "梵", "波", "土", "印", "波斯", "阿拉伯", "梵文", "拉丁",
+}
+DISTRACTOR_NAME_RE = re.compile(
+    r"(?:人名|姓氏|某人|某某|地名|国名|城市名|人名用|姓)",
+    re.IGNORECASE,
+)
+DISTRACTOR_FOREIGN_RE = re.compile(
+    r"(?:来自|源自|借自|借词|外来语|外来词|"
+    r"日语|法语|德语|俄语|西班牙语|意大利语|葡萄牙语|荷兰语|"
+    r"希腊语|拉丁语|阿拉伯语|梵语|波斯语|土耳其语|印地语)"
+)
+
+
+def _split_translation_for_distractors(translation):
+    """Return (pos, clean gloss, leading ECDICT marker) without losing metadata."""
+    text = (translation or "")
+    text = text.replace("\\r\\n", "\\n").replace("\\n", "\\n").replace("\\r", "\\n")
+    groups = []
+    current_pos = ""
+    current_parts = []
+
+    def flush():
+        nonlocal current_parts
+        raw = "\\n".join(part for part in current_parts if part).strip()
+        for piece in re.split(r"[；;，,、\\n]+", raw):
+            piece = re.sub(r"<[^>]*>", " ", piece or "").strip()
+            marker_match = re.match(r"^\\s*\\[([^]]{1,16})\\]\\s*", piece)
+            marker = marker_match.group(1).strip() if marker_match else ""
+            if marker_match:
+                piece = piece[marker_match.end():]
+            fragment = _clean_fragment(piece)
+            if fragment and len(fragment) <= 100:
+                groups.append((current_pos, fragment, marker))
+        current_parts = []
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        matches = list(POS_RE.finditer(line))
+        if matches:
+            for index, match in enumerate(matches):
+                flush()
+                current_pos = match.group(1).lower()
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+                current_parts.append(line[match.end():end].strip())
+        else:
+            current_parts.append(line)
+    flush()
+    if not groups:
+        for piece in re.split(r"[；;，,、\\n]+", text):
+            piece = (piece or "").strip()
+            marker_match = re.match(r"^\\s*\\[([^]]{1,16})\\]\\s*", piece)
+            marker = marker_match.group(1).strip() if marker_match else ""
+            if marker_match:
+                piece = piece[marker_match.end():]
+            fragment = _clean_fragment(piece)
+            if fragment and len(fragment) <= 100:
+                groups.append(("", fragment, marker))
+    return groups
+
+
+def _is_excluded_distractor_sense(fragment, marker="", tag_tokens=None):
+    """Hard exclusions for names, specialist glosses, and explicitly foreign terms."""
+    marker = (marker or "").strip()
+    normalized_marker = marker.casefold()
+    if normalized_marker in {x.casefold() for x in DISTRACTOR_DOMAIN_MARKERS}:
+        return True
+    if normalized_marker in {x.casefold() for x in DISTRACTOR_LANGUAGE_MARKERS}:
+        return True
+    if DISTRACTOR_NAME_RE.search(fragment or "") or DISTRACTOR_FOREIGN_RE.search(fragment or ""):
+        return True
+    if tag_tokens and tag_tokens.intersection({
+        "name", "proper", "person", "place", "人名", "地名", "surname", "firstname"
+    }):
+        return True
+    return False
+
+
+def _inflected_forms(conn, candidate_words):
+    """Find words listed as inflections in other entries' ECDICT exchange fields."""
+    if not candidate_words:
+        return set()
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
+    if "exchange" not in columns:
+        return set()
+    wanted = {word.casefold() for word in candidate_words}
+    found = set()
+    # ECDICT stores forms on the lemma as typed entries such as p:apples;d:walked.
+    for row in conn.execute("SELECT exchange FROM words WHERE exchange IS NOT NULL AND exchange<>''"):
+        for item in re.split(r"[;；]", row["exchange"] or ""):
+            if ":" not in item:
+                continue
+            _, forms = item.split(":", 1)
+            for form in re.split(r"[,，/\\s]+", forms):
+                form = form.strip().casefold()
+                if form in wanted:
+                    found.add(form)
+    return found
+
+
 def _pos_family(pos):
     pos = (pos or "").lower()
     if pos == "n": return "n"
@@ -453,6 +574,7 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
             break
 
     target_family = _pos_family(target_pos)
+    inflected_words = _inflected_forms(conn, [row["word"] for row in rows_by_word.values()])
     # Keep separate pools so rare dictionary entries are only used as a fallback.
     pools = {
         "same_gk": [], "same_common": [], "same_any": [],
@@ -472,8 +594,10 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
         except (TypeError, ValueError):
             is_oxford = False
 
-        # Proper names and place names are poor general-purpose meaning distractors.
-        if tag_tokens.intersection({"name", "proper", "person", "place", "地名", "人名"}):
+        # Proper-name entries are excluded before their glosses are considered.
+        if tag_tokens.intersection({"name", "proper", "person", "place", "地名", "人名", "surname", "firstname"}):
+            continue
+        if row["word"].casefold() in inflected_words:
             continue
 
         if is_high_school:
@@ -483,17 +607,18 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
         else:
             tier = "any"
 
-        for candidate_pos, fragments in split_translation(row["translation"] or ""):
+        for candidate_pos, value, marker in _split_translation_for_distractors(row["translation"] or ""):
+            if _is_excluded_distractor_sense(value, marker, tag_tokens):
+                continue
             pos_group = "same" if _pos_family(candidate_pos) == target_family else "other"
             destination = pools[f"{pos_group}_{tier}"]
-            for value in fragments:
-                key = _norm(value)
-                if len(value) < 2 or not key or key in seen_glosses:
-                    continue
-                if key in _norm(correct) or _norm(correct) in key:
-                    continue
-                seen_glosses.add(key)
-                destination.append(value)
+            key = _norm(value)
+            if len(value) < 2 or not key or key in seen_glosses:
+                continue
+            if key in _norm(correct) or _norm(correct) in key:
+                continue
+            seen_glosses.add(key)
+            destination.append(value)
 
     for pool in pools.values():
         random.shuffle(pool)
