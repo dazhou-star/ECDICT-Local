@@ -27,5 +27,25 @@ class TranslationSplitTests(unittest.TestCase):
         self.assertEqual(split_translation("  "), [])
 
 
+    def test_literal_backslash_newlines_and_pos_markers(self):
+        source = r"n. 动力, 动量\n[化] 动量\nvt. 投掷, 抛, 摇摆"
+        self.assertEqual(
+            split_translation(source),
+            [("n", ["动力", "动量"]), ("vt", ["投掷", "抛", "摇摆"])],
+        )
+
+    def test_toss_translation_splits_into_individual_glosses(self):
+        source = (
+            "n. 动力, 动量\\n[化] 动量"
+            "\\nvt. 投掷, 抛, 摇摆, 震荡, 掷钱币决定"
+            "\\nvi. 被到处扔, 摇摆, 颠簸, 辗转, 掷钱币决定某事"
+        )
+        groups = split_translation(source)
+        self.assertEqual(groups[0], ("n", ["动力", "动量"]))
+        self.assertIn("投掷", groups[1][1])
+        self.assertIn("掷钱币决定某事", groups[2][1])
+        self.assertTrue(all(len(fragment) < 30 for _, fragments in groups for fragment in fragments))
+
+
 if __name__ == "__main__":
     unittest.main()
