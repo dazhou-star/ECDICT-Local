@@ -1,29 +1,43 @@
-from datetime import datetime, timezone
-from typing import List
+from datetime import datetime, timezone, date, timedelta
+from typing import List, Optional, Dict
+from pathlib import Path
+from uuid import uuid4
+import hashlib
+import json
 from difflib import SequenceMatcher
 from collections import Counter
 from html import unescape
 import re
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from .image_ocr import recognize_vocabulary_image, OCREngineUnavailable, get_vision_status
-from .config import FRONTEND_DIR, HOST, PORT
+from .paddle_ocr import get_paddle_status
+from .lemma import normalize_words
+from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table
 
 class FavoriteRequest(BaseModel):
     word: str
+    study_date: Optional[str] = None
 
 
 class FavoriteImportRequest(BaseModel):
     words: List[str]
 
 
+class FavoriteBulkItem(BaseModel):
+    word: str
+    study_date: Optional[str] = None
+
+
 class FavoriteBulkRequest(BaseModel):
-    words: List[str]
+    # `words` remains supported for older clients; new clients send dated `items`.
+    words: List[str] = []
+    items: List[FavoriteBulkItem] = []
 
 
 class ImageCorrectionItem(BaseModel):
@@ -35,8 +49,37 @@ class ImageCorrectionRequest(BaseModel):
     items: List[ImageCorrectionItem]
 
 
+class ImageNormalizeRequest(BaseModel):
+    words: List[str]
+
+
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def validate_study_date(value: Optional[str]) -> str:
+    """Return a validated ISO calendar date; default to today's server-local date."""
+    if not value:
+        return date.today().isoformat()
+    try:
+        return date.fromisoformat(value).isoformat()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail=f"无效日期：{value}，请使用 YYYY-MM-DD")
+
+
+def distribute_dates(start_value: str, end_value: str, count: int) -> List[str]:
+    """Spread ordered OCR rows evenly over an inclusive date interval."""
+    start = date.fromisoformat(start_value)
+    end = date.fromisoformat(end_value)
+    if end < start:
+        raise HTTPException(status_code=422, detail="日期段的结束日期不能早于开始日期")
+    if count <= 0:
+        return []
+    span = (end - start).days
+    if count == 1 or span == 0:
+        return [start.isoformat()] * count
+    # Include both endpoints; rounding distributes rows as evenly as possible.
+    return [(start + timedelta(days=int((i * span / (count - 1)) + 0.5))).isoformat() for i in range(count)]
 
 
 def clean_word(value: str) -> str:
@@ -184,6 +227,40 @@ def _correct_image_item(conn, item: ImageCorrectionItem, columns: set):
     query_meaning = _normalize_meaning(raw_meaning)
     candidates = _fuzzy_candidates(conn, query_word, query_meaning, columns)
 
+        # 排除与图片原词属于同一词条的其他词形。
+    # normalize_words 使用项目现有的词形还原数据，不修改原始单词。
+    if query_word and candidates:
+        normalization_input = [raw_word] + [
+            candidate["word"] for candidate in candidates
+        ]
+        normalized_items = normalize_words(normalization_input)
+
+        original_lemma = _normalize_english(
+            normalized_items[0].get("word") or raw_word
+        )
+
+        filtered_candidates = []
+
+        for candidate, normalized in zip(
+            candidates, normalized_items[1:]
+        ):
+            candidate_word = _normalize_english(candidate["word"])
+            candidate_lemma = _normalize_english(
+                normalized.get("word") or candidate["word"]
+            )
+
+            # 原词本身必须保留；其他与原词还原到同一词头的候选全部排除。
+            if (
+                candidate_word != query_word
+                and original_lemma
+                and candidate_lemma == original_lemma
+            ):
+                continue
+
+            filtered_candidates.append(candidate)
+
+        candidates = filtered_candidates
+
     ranked = []
     for candidate in candidates:
         candidate_word = _normalize_english(candidate["word"])
@@ -294,31 +371,244 @@ def search(
 
 @app.get("/api/image-import/status")
 def image_import_status():
-    """Check the local Ollama service and configured Gemma 4 vision model."""
-    return get_vision_status()
+    """Report Gemma 4 as the primary whole-image engine; PaddleOCR is not used."""
+    vision = get_vision_status()
+    paddle = get_paddle_status()
+    return {
+        **vision,
+        # `available` means the engine actually used by /recognize is ready.
+        "available": bool(vision.get("available")),
+        "vision_available": bool(vision.get("available")),
+        "ollama_available": bool(vision.get("ok")),
+        "paddle": paddle,
+        "primary_engine": "gemma4",
+        "message": (
+            f"Gemma 4（{vision.get('model') or 'configured model'}）已就绪，图片将整张交给视觉模型识别。"
+            if vision.get("available")
+            else f"Gemma 4 主识别引擎不可用：{vision.get('message', '未知错误')}"
+        ),
+    }
+
+
+@app.post("/api/image-import/normalize")
+def normalize_image_import(payload: ImageNormalizeRequest):
+    """Convert OCR/manual words to ECDICT lemma forms using lemma.en.txt."""
+    if len(payload.words) > 1000:
+        raise HTTPException(status_code=413, detail="单次最多处理 1000 个单词")
+    return {"ok": True, "items": normalize_words(payload.words)}
 
 
 @app.post("/api/image-import/recognize")
-async def recognize_image_import(file: UploadFile = File(...)):
-    """Upload a full vocabulary photo and transcribe it with local Gemma 4 vision."""
-    content_type = (file.content_type or "").lower()
-    if content_type and not content_type.startswith("image/"):
-        raise HTTPException(status_code=415, detail="请上传图片文件")
-    image_bytes = await file.read(20 * 1024 * 1024 + 1)
-    await file.close()
-    if len(image_bytes) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="图片不能超过 20 MB")
+async def recognize_image_import(
+    files: List[UploadFile] = File(default=[]),
+    file: Optional[UploadFile] = File(default=None),
+    date_ranges: Optional[str] = Form(default=None),
+):
+    """Save each original photo, then OCR photos sequentially with per-photo date ranges."""
+    uploads = list(files or [])
+    if file is not None:
+        uploads.append(file)
+    if not uploads:
+        raise HTTPException(status_code=422, detail="请至少选择一张图片")
+    if len(uploads) > 10:
+        raise HTTPException(status_code=413, detail="一次最多上传 10 张图片")
+
     try:
-        result = await run_in_threadpool(recognize_vocabulary_image, image_bytes)
-    except OCREngineUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        import logging
-        logging.getLogger("lexicon.vision").exception("Gemma 4 image transcription failed")
-        raise HTTPException(status_code=500, detail=f"Gemma 4 图片识别失败：{type(exc).__name__}。请检查后端终端日志。") from exc
-    return {"ok": True, **result}
+        supplied_ranges = json.loads(date_ranges) if date_ranges else []
+        if not isinstance(supplied_ranges, list):
+            raise ValueError("date_ranges 必须是数组")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=422, detail="图片日期设置格式错误")
+
+    today = date.today().isoformat()
+    images = []
+    all_rows = []
+    total_bytes = 0
+    IMAGE_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    extension_by_mime = {
+        "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+        "image/bmp": ".bmp", "image/gif": ".gif", "image/tiff": ".tif",
+    }
+
+    for upload_index, upload in enumerate(uploads):
+        filename = upload.filename or "vocabulary-image"
+        content_type = (upload.content_type or "application/octet-stream").split(";")[0].lower()
+        if not content_type.startswith("image/"):
+            images.append({"filename": filename, "ok": False, "error": "不是有效的图片文件"})
+            await upload.close()
+            continue
+        image_bytes = await upload.read(20 * 1024 * 1024 + 1)
+        await upload.close()
+        total_bytes += len(image_bytes)
+        if total_bytes > 100 * 1024 * 1024:
+            images.append({"filename": filename, "ok": False, "error": "本次上传总大小不能超过 100 MB"})
+            for pending in uploads[upload_index + 1:]:
+                pending_name = pending.filename or "vocabulary-image"
+                await pending.close()
+                images.append({"filename": pending_name, "ok": False, "error": "总上传大小超限，未处理此图片"})
+            break
+        if len(image_bytes) > 20 * 1024 * 1024:
+            images.append({"filename": filename, "ok": False, "error": "单张图片不能超过 20 MB"})
+            continue
+
+        range_item = supplied_ranges[upload_index] if upload_index < len(supplied_ranges) else {}
+        if not isinstance(range_item, dict):
+            range_item = {}
+        date_start = validate_study_date(range_item.get("start") or today)
+        date_end = validate_study_date(range_item.get("end") or date_start)
+        if date_end < date_start:
+            raise HTTPException(status_code=422, detail=f"图片 {filename} 的日期段结束日期早于开始日期")
+
+        # Persist the exact uploaded bytes before OCR, including images whose OCR later fails.
+        image_id = uuid4().hex
+        extension = extension_by_mime.get(content_type, ".img")
+        stored_filename = f"{image_id}{extension}"
+        stored_path = IMAGE_IMPORT_DIR / stored_filename
+        try:
+            stored_path.write_bytes(image_bytes)
+            sha256 = hashlib.sha256(image_bytes).hexdigest()
+            with get_db() as conn:
+                conn.execute(
+                    """INSERT INTO image_imports
+                       (image_id, original_filename, stored_filename, mime_type, byte_size,
+                        sha256, uploaded_at, date_start, date_end, recognized_words)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                    (image_id, filename, stored_filename, content_type, len(image_bytes),
+                     sha256, utc_now_iso(), date_start, date_end),
+                )
+                conn.commit()
+        except Exception:
+            try:
+                stored_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
+
+        try:
+            result = await run_in_threadpool(recognize_vocabulary_image, image_bytes)
+            recognized = [dict(item) for item in result.get("rows", [])]
+            assigned_dates = distribute_dates(date_start, date_end, len(recognized))
+            rows = []
+            for row_index, row in enumerate(recognized):
+                row["raw_word"] = str(row.get("word") or "")
+                row["source_image"] = filename
+                row["source_image_id"] = image_id
+                row["study_date"] = assigned_dates[row_index]
+                rows.append(row)
+                all_rows.append(row)
+            with get_db() as conn:
+                conn.execute("UPDATE image_imports SET recognized_words = ? WHERE image_id = ?", (len(rows), image_id))
+                conn.commit()
+            images.append({
+                "filename": filename, "ok": True, "image_id": image_id,
+                "saved": True, "date_start": date_start, "date_end": date_end,
+                "engine": result.get("engine", "OCR"), "row_count": len(rows),
+                "uncertain_count": sum(1 for row in rows if row.get("uncertain") or row.get("lemma_uncertain")),
+                "elapsed_ms": result.get("elapsed_ms"), "rows": rows,
+                "note": result.get("note", ""),
+            })
+        except OCREngineUnavailable as exc:
+            images.append({"filename": filename, "ok": False, "image_id": image_id, "saved": True,
+                           "date_start": date_start, "date_end": date_end, "error": str(exc)})
+        except ValueError as exc:
+            images.append({"filename": filename, "ok": False, "image_id": image_id, "saved": True,
+                           "date_start": date_start, "date_end": date_end, "error": str(exc)})
+        except Exception as exc:
+            import logging
+            logging.getLogger("lexicon.vision").exception("Image transcription failed: %s", filename)
+            images.append({"filename": filename, "ok": False, "image_id": image_id, "saved": True,
+                           "date_start": date_start, "date_end": date_end,
+                           "error": f"识别失败：{type(exc).__name__}。原图已保存，请检查后端终端日志。"})
+
+    normalized = normalize_words([str(row.get("raw_word") or row.get("word") or "") for row in all_rows])
+    for row, lemma in zip(all_rows, normalized):
+        row.update({
+            "word": lemma["word"], "lemma_changed": lemma["lemma_changed"],
+            "lemma_candidates": lemma["lemma_candidates"],
+            "lemma_uncertain": lemma["lemma_uncertain"],
+            "lemma_source": lemma.get("lemma_source", ""),
+        })
+
+    # Merge duplicate lemmas but retain all dates and source-image references.
+    merged = {}
+    for row in all_rows:
+        key = str(row.get("word") or "").casefold()
+        if not key:
+            continue
+        if key not in merged:
+            merged[key] = dict(row)
+            merged[key]["raw_words"] = [row.get("raw_word") or row.get("word")]
+            merged[key]["source_images"] = [row.get("source_image", "")]
+            merged[key]["source_image_ids"] = [row.get("source_image_id", "")]
+            merged[key]["study_dates"] = [row.get("study_date", today)]
+            first_meaning = str(row.get("meaning") or "").strip()
+            merged[key]["_meanings"] = [first_meaning] if first_meaning else []
+        else:
+            current = merged[key]
+            raw = row.get("raw_word") or row.get("word")
+            if raw and raw not in current["raw_words"]:
+                current["raw_words"].append(raw)
+            source = row.get("source_image", "")
+            if source and source not in current["source_images"]:
+                current["source_images"].append(source)
+            source_id = row.get("source_image_id", "")
+            if source_id and source_id not in current["source_image_ids"]:
+                current["source_image_ids"].append(source_id)
+            study_date = row.get("study_date", today)
+            if study_date and study_date not in current["study_dates"]:
+                current["study_dates"].append(study_date)
+            meaning = str(row.get("meaning") or "").strip()
+            if meaning and meaning not in current["_meanings"]:
+                current["_meanings"].append(meaning)
+                current["meaning"] = "；".join(current["_meanings"])
+            current["uncertain"] = bool(current.get("uncertain") or row.get("uncertain"))
+            current["lemma_changed"] = bool(current.get("lemma_changed") or row.get("lemma_changed"))
+            current["lemma_uncertain"] = bool(current.get("lemma_uncertain") or row.get("lemma_uncertain"))
+            candidates = list(current.get("lemma_candidates") or [])
+            for candidate in row.get("lemma_candidates") or []:
+                if candidate not in candidates:
+                    candidates.append(candidate)
+            current["lemma_candidates"] = candidates
+            if row.get("note") and row["note"] not in str(current.get("note") or ""):
+                current["note"] = (str(current.get("note") or "") + "；" + str(row["note"])).strip("；")
+
+    rows = list(merged.values())
+    for index, row in enumerate(rows, 1):
+        row["index"] = index
+        row.pop("_meanings", None)
+        row["raw_word"] = " / ".join(row.pop("raw_words", []))
+        row["source_image"] = "、".join(row.pop("source_images", []))
+        row["study_dates"] = sorted(set(row.get("study_dates") or []))
+        # A word appearing in multiple photos defaults to its earliest assigned date;
+        # the review table lets the user override it manually.
+        row["study_date"] = row["study_dates"][0] if row["study_dates"] else today
+        row["source_image_ids"] = row.pop("source_image_ids", [])
+
+    return {
+        "ok": True, "images": images, "image_count": len(uploads),
+        "success_count": sum(1 for item in images if item.get("ok")),
+        "failed_count": sum(1 for item in images if not item.get("ok")),
+        "rows": rows, "row_count": len(rows),
+        "uncertain_count": sum(1 for row in rows if row.get("uncertain") or row.get("lemma_uncertain")),
+        "saved_image_count": sum(1 for item in images if item.get("saved")),
+        "engine": "PaddleOCR CPU + Gemma 4 低置信度辅助",
+    }
+
+
+@app.get("/api/image-import/images/{image_id}")
+def get_saved_import_image(image_id: str):
+    """Retrieve an original image by its opaque server-generated identifier."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT original_filename, stored_filename, mime_type FROM image_imports WHERE image_id = ?",
+            (image_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="找不到这张原始图片")
+    path = IMAGE_IMPORT_DIR / row["stored_filename"]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="原始图片文件不存在")
+    return FileResponse(path, media_type=row["mime_type"], filename=row["original_filename"])
 
 
 @app.post("/api/image-import/correct")
@@ -340,7 +630,7 @@ def correct_image_import(payload: ImageCorrectionRequest):
 def list_favorites():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT word, added_at FROM favorites ORDER BY added_at DESC, id DESC"
+            "SELECT word, added_at, study_date FROM favorites ORDER BY study_date DESC, added_at DESC, id DESC"
         ).fetchall()
     return {"items": [dict(row) for row in rows]}
 
@@ -349,14 +639,15 @@ def list_favorites():
 def add_favorite(payload: FavoriteRequest):
     word = clean_word(payload.word)
     now = utc_now_iso()
+    study_date = validate_study_date(payload.study_date)
     with get_db() as conn:
         cursor = conn.execute(
-            "INSERT OR IGNORE INTO favorites (word, added_at) VALUES (?, ?)",
-            (word, now),
+            "INSERT OR IGNORE INTO favorites (word, added_at, study_date) VALUES (?, ?, ?)",
+            (word, now, study_date),
         )
         conn.commit()
         row = conn.execute(
-            "SELECT word, added_at FROM favorites WHERE word = ? COLLATE NOCASE",
+            "SELECT word, added_at, study_date FROM favorites WHERE word = ? COLLATE NOCASE",
             (word,),
         ).fetchone()
     return {"ok": True, "created": cursor.rowcount == 1, **dict(row)}
@@ -364,8 +655,9 @@ def add_favorite(payload: FavoriteRequest):
 
 @app.post("/api/favorites/import")
 def import_favorites(payload: FavoriteImportRequest):
-    """One-time import of the browser's former localStorage favorites."""
+    """Import the browser's former localStorage favorites with today's study date."""
     now = utc_now_iso()
+    study_date = date.today().isoformat()
     words = []
     seen = set()
     for value in payload.words:
@@ -379,12 +671,10 @@ def import_favorites(payload: FavoriteImportRequest):
 
     imported = 0
     with get_db() as conn:
-        # Legacy localStorage is newest-first; insert in reverse so id DESC
-        # keeps that order when all imported words share one migration time.
         for word in reversed(words):
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO favorites (word, added_at) VALUES (?, ?)",
-                (word, now),
+                "INSERT OR IGNORE INTO favorites (word, added_at, study_date) VALUES (?, ?, ?)",
+                (word, now, study_date),
             )
             imported += max(cursor.rowcount, 0)
         conn.commit()
@@ -393,38 +683,38 @@ def import_favorites(payload: FavoriteImportRequest):
 
 @app.post("/api/favorites/bulk")
 def bulk_add_favorites(payload: FavoriteBulkRequest):
-    """Add a checked batch of words to the shared favorites list."""
-    if len(payload.words) > 500:
+    """Add checked words with individual study dates; old `words` payloads remain valid."""
+    if len(payload.words) + len(payload.items) > 500:
         raise HTTPException(status_code=413, detail="单次最多导入 500 个单词")
 
     now = utc_now_iso()
+    today = date.today().isoformat()
+    dated_items = [(value, None) for value in payload.words]
+    dated_items.extend((item.word, item.study_date) for item in payload.items)
     words = []
     seen = set()
-    for value in payload.words:
+    for value, study_date_value in dated_items:
         if not isinstance(value, str):
             continue
         word = value.strip()
         key = word.casefold()
         if word and len(word) <= 100 and key not in seen:
             seen.add(key)
-            words.append(word)
+            words.append((word, validate_study_date(study_date_value or today)))
 
     created = 0
     with get_db() as conn:
-        for word in words:
+        for word, study_date in words:
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO favorites (word, added_at) VALUES (?, ?)",
-                (word, now),
+                "INSERT OR IGNORE INTO favorites (word, added_at, study_date) VALUES (?, ?, ?)",
+                (word, now, study_date),
             )
             created += max(cursor.rowcount, 0)
         conn.commit()
 
     return {
-        "ok": True,
-        "received": len(payload.words),
-        "valid": len(words),
-        "created": created,
-        "skipped": len(words) - created,
+        "ok": True, "received": len(dated_items), "valid": len(words),
+        "created": created, "skipped": len(words) - created,
     }
 
 

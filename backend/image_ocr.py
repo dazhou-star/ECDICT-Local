@@ -1,8 +1,8 @@
-"""Gemma 4 vision transcription through the local Ollama HTTP API.
+"""Whole-image vocabulary transcription with Gemma 4 through local Ollama.
 
 The historical module name is retained so this can replace the previous
 server-side OCR implementation without changing its import path elsewhere.
-Uploaded images are normalized in memory and are never persisted.
+Uploaded images are normalized in memory and are never persisted. The historical module name remains for compatibility.
 """
 from __future__ import annotations
 
@@ -231,7 +231,7 @@ def _clean_rows(payload: dict) -> list[dict]:
     return rows[:200]
 
 
-def recognize_vocabulary_image(image_bytes: bytes, top: float | None = None, divider: float | None = None) -> dict:
+def _recognize_with_gemma(image_bytes: bytes, top: float | None = None, divider: float | None = None) -> dict:
     """Send one complete vocabulary photo to Gemma 4 through local Ollama."""
     prepared, original_size = _prepare_image(image_bytes)
     image_b64 = base64.b64encode(prepared).decode("ascii")
@@ -280,3 +280,8 @@ def recognize_vocabulary_image(image_bytes: bytes, top: float | None = None, div
         "elapsed_ms": elapsed_ms,
         "image_size": {"width": original_size[0], "height": original_size[1]},
     }
+
+
+def recognize_vocabulary_image(image_bytes: bytes, top: float | None = None, divider: float | None = None) -> dict:
+    """Transcribe the complete image with Gemma 4, preserving the original row layout."""
+    return _recognize_with_gemma(image_bytes, top=top, divider=divider)

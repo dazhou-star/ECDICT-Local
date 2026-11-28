@@ -9,3 +9,6 @@ __pycache__/
 /database/*.db
 /database/*.db-*
 /database/*.bak
+
+# User data
+/database/image_imports/*.*
