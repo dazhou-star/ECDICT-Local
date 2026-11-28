@@ -89,3 +89,70 @@ footer{margin-top:.7mm;padding-top:.4mm;line-height:1}
 @media print{
   main#paper.paper{padding:2mm 3mm!important}
 }
+
+
+/* Write-book print layout: larger prompts, one-line questions, dense answer key. */
+.paper-write .exercise{
+  display:flex;
+  align-items:baseline;
+  flex-wrap:wrap;
+  column-gap:1.5mm;
+  row-gap:0;
+  padding:.35mm 0;
+  line-height:1.12;
+}
+.paper-write .exercise-number{
+  flex:0 0 auto;
+  font-size:15pt;
+  font-weight:700;
+  line-height:1.1;
+}
+.paper-write .prompt{
+  flex:0 1 auto;
+  min-width:0;
+  font-size:19pt;
+  line-height:1.15;
+  font-weight:600;
+}
+.paper-write .exercise small{
+  flex:0 0 auto;
+  font-size:11pt;
+  margin-left:0;
+  white-space:nowrap;
+}
+.paper-write .blank{
+  flex:0 0 auto;
+  font-size:13pt;
+  letter-spacing:.5px;
+  margin:0 0 0 auto;
+  line-height:1.1;
+  white-space:nowrap;
+}
+.paper-write .answer-key{
+  margin-top:1.5mm;
+  padding-top:.7mm;
+}
+.paper-write .answer-key h2{
+  margin-bottom:.7mm;
+}
+.paper-write .answer-list{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  column-gap:3mm;
+  row-gap:.4mm;
+}
+.paper-write .answer-item{
+  display:block;
+  min-width:0;
+  font-size:15pt;
+  line-height:1.15;
+  white-space:nowrap;
+}
+.paper-write .answer-item b{
+  font-size:17pt;
+  font-weight:700;
+}
+@media print{
+  .paper-write .exercise{break-inside:avoid}
+  .paper-write .answer-list{break-inside:auto}
+}
