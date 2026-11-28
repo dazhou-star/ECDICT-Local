@@ -733,7 +733,7 @@ def remove_vocabulary_book_word(mode: str, word: str):
 def list_favorites():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT word, added_at, study_date FROM favorites ORDER BY study_date DESC, added_at DESC, id DESC"
+            "SELECT word, added_at, study_date FROM vocabulary_books WHERE mode='read' ORDER BY study_date DESC, added_at DESC, id DESC"
         ).fetchall()
     return {"items": [dict(row) for row in rows]}
 
@@ -745,12 +745,12 @@ def add_favorite(payload: FavoriteRequest):
     study_date = validate_study_date(payload.study_date)
     with get_db() as conn:
         cursor = conn.execute(
-            "INSERT OR IGNORE INTO favorites (word, added_at, study_date) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO vocabulary_books (word, mode, added_at, study_date) VALUES (?, 'read', ?, ?)",
             (word, now, study_date),
         )
         conn.commit()
         row = conn.execute(
-            "SELECT word, added_at, study_date FROM favorites WHERE word = ? COLLATE NOCASE",
+            "SELECT word, added_at, study_date FROM vocabulary_books WHERE word = ? COLLATE NOCASE AND mode='read'",
             (word,),
         ).fetchone()
     return {"ok": True, "created": cursor.rowcount == 1, **dict(row)}
@@ -826,7 +826,7 @@ def remove_favorite(word: str):
     word = clean_word(word)
     with get_db() as conn:
         cursor = conn.execute(
-            "DELETE FROM favorites WHERE word = ? COLLATE NOCASE",
+            "DELETE FROM vocabulary_books WHERE word = ? COLLATE NOCASE AND mode='read'",
             (word,),
         )
         conn.commit()
