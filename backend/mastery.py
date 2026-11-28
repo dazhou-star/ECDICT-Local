@@ -419,7 +419,7 @@ DISTRACTOR_NAME_RE = re.compile(
 DISTRACTOR_FOREIGN_RE = re.compile(
     r"(?:来自|源自|借自|借词|外来语|外来词|"
     r"日语|法语|德语|俄语|西班牙语|意大利语|葡萄牙语|荷兰语|"
-    r"希腊语|拉丁语|阿拉伯语|梵语|波斯语|土耳其语|印地语)"
+    r"希腊语|拉丁语|阿拉伯语|梵语|波斯语|土耳其语|印地语|希伯来语)"
 )
 
 
@@ -489,26 +489,32 @@ def _is_excluded_distractor_sense(fragment, marker="", tag_tokens=None):
     return False
 
 
+_INFLECTED_FORM_CACHE = None
+
+
 def _inflected_forms(conn, candidate_words):
     """Find words listed as inflections in other entries' ECDICT exchange fields."""
+    global _INFLECTED_FORM_CACHE
     if not candidate_words:
         return set()
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
-    if "exchange" not in columns:
-        return set()
-    wanted = {word.casefold() for word in candidate_words}
-    found = set()
-    # ECDICT stores forms on the lemma as typed entries such as p:apples;d:walked.
-    for row in conn.execute("SELECT exchange FROM words WHERE exchange IS NOT NULL AND exchange<>''"):
-        for item in re.split(r"[;；]", row["exchange"] or ""):
-            if ":" not in item:
-                continue
-            _, forms = item.split(":", 1)
-            for form in re.split(r"[,，/\s]+", forms):
-                form = form.strip().casefold()
-                if form in wanted:
-                    found.add(form)
-    return found
+    if _INFLECTED_FORM_CACHE is None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
+        if "exchange" not in columns:
+            _INFLECTED_FORM_CACHE = set()
+        else:
+            forms_found = set()
+            # ECDICT stores forms on the lemma as typed entries such as p:apples;d:walked.
+            for row in conn.execute("SELECT exchange FROM words WHERE exchange IS NOT NULL AND exchange<>''"):
+                for item in re.split(r"[;；]", row["exchange"] or ""):
+                    if ":" not in item:
+                        continue
+                    _, forms = item.split(":", 1)
+                    for form in re.split(r"[,，/\s]+", forms):
+                        form = form.strip().casefold()
+                        if form:
+                            forms_found.add(form)
+            _INFLECTED_FORM_CACHE = forms_found
+    return {word.casefold() for word in candidate_words if word.casefold() in _INFLECTED_FORM_CACHE}
 
 
 def _pos_family(pos):
