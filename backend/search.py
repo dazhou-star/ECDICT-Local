@@ -67,7 +67,7 @@ def random_word():
             except (TypeError, ValueError):
                 rank = 0
             words.append(row["word"])
-            weights.append(0.04 if rank <= 0 else 1.0 / math.sqrt(max(1, rank)))
+            weights.append(0.001 if rank <= 0 else 1.0 / math.sqrt(max(1, rank)))
         return random.choices(words, weights=weights, k=1)[0]
     finally:
         conn.close()
