@@ -12,3 +12,5 @@ __pycache__/
 
 # User data
 /database/image_imports/*.*
+
+更新.bat
