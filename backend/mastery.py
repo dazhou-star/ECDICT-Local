@@ -790,31 +790,20 @@ def overview():
     today = date.today().isoformat()
     with get_db() as conn:
         favorites = conn.execute("SELECT COUNT(*) FROM favorites").fetchone()[0]
-        senses = conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode='read'").fetchone()[0]
-        drafts = conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode='read' AND review_state='draft'").fetchone()[0]
-        active = conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode='read' AND review_state='active'").fetchone()[0]
-        due = conn.execute("SELECT COUNT(*) FROM sense_mastery WHERE mode='read' AND next_review_date<=?", (today,)).fetchone()[0]
-        total = conn.execute("SELECT COUNT(*) FROM sense_test_history WHERE mode='read'").fetchone()[0]
-    return {"favorites": favorites, "senses": senses, "drafts": drafts, "active": active, "due": due, "tests": total}
-
-
-def export_print_data(start_date=None, end_date=None):
-    """Build a read-only snapshot for continuous-roll printing; never alters study state."""
-    clauses = []
-    params = []
-    if start_date:
-        clauses.append("f.study_date>=?")
-        params.append(start_date)
-    if end_date:
-        clauses.append("f.study_date<=?")
-        params.append(end_date)
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    with get_db() as conn:
-        favorite_rows = conn.execute(
-            f"""SELECT f.word, f.study_date, f.added_at, w.*
-                FROM favorites f LEFT JOIN words w ON w.word=f.word COLLATE NOCASE
-                {where}
-                ORDER BY f.study_date ASC, f.added_at ASC, f.id ASC""",
+        sense_date_filter = ""
+        if start_date:
+            sense_date_filter += " AND fav.study_date>=?"
+        if end_date:
+            sense_date_filter += " AND fav.study_date<=?"
+        senses = conn.execute(
+            f"""SELECT s.id, s.word, s.pos, s.sense_text, s.review_state,
+                       GROUP_CONCAT(fg.fragment, '；') AS fragments
+                FROM word_senses s
+                JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
+                LEFT JOIN sense_fragments fg ON fg.sense_id=s.id AND fg.enabled=1
+                WHERE s.mode='read' AND s.review_state='active' {sense_date_filter}
+                GROUP BY s.id
+                ORDER BY fav.study_date ASC, s.word COLLATE NOCASE, s.source_order""",
             params,
         ).fetchall()
         words = []
