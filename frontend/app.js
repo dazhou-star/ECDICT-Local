@@ -1339,7 +1339,10 @@ function speakWord(word) {
           </div>
           <div class="image-review-footer">
             <span id="imageSelectedCount">已选择 0 个单词</span>
-            <button type="button" class="image-import-submit" id="importSelectedWords" disabled>加入读单词本</button>
+            <label class="image-book-target">目标单词本
+              <select id="imageBookMode"><option value="read">读单词本</option><option value="write">写单词本</option></select>
+            </label>
+            <button type="button" class="image-import-submit" id="importSelectedWords" disabled>导入所选单词</button>
           </div>
         </section>
       </section>
@@ -1880,18 +1883,19 @@ function speakWord(word) {
       button.disabled = true;
       button.textContent = "正在导入…";
       try {
-        const result = await api("/api/books/read/bulk", {
+        const targetBook = $("#imageBookMode").value;
+        const result = await api(`/api/books/${targetBook}/bulk`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ items })
         });
-        await loadFavorites();
+        await loadBook(targetBook);
         const importedSet = new Set(words.map(word => word.toLowerCase()));
         rows.forEach(row => {
           if (importedSet.has(row.word.trim().toLowerCase())) row.selected = false;
         });
         refreshRows();
-        status(`导入完成：新增 ${result.created} 个，重复跳过 ${result.skipped} 个`);
+        status(`导入到${targetBook === "read" ? "读" : "写"}单词本：新增 ${result.created} 个，重复跳过 ${result.skipped} 个`);
         progress.hidden = false;
         progressUpdate("导入完成", 100, `新增 ${result.created} 个单词；重复或已存在 ${result.skipped} 个。`);
       } catch (error) {
@@ -2125,7 +2129,7 @@ function speakWord(word) {
   }
 
   document.addEventListener("keydown", event => {
-    if (state.page !== "favorites" && state.page !== "history") return;
+    if (!["favorites", "history", "read-book", "write-book"].includes(state.page)) return;
     const target = event.target;
     if (target && (target.matches("input, textarea, select") || target.isContentEditable)) return;
     if (event.key === "/") {
@@ -2276,13 +2280,13 @@ function speakWord(word) {
 
         $("#welcome").hidden = false;
 
-      } else if (b.dataset.page === "mastery") {
+      } else if (b.dataset.page === "read-book") {
 
-        showMastery();
+        showBook("read");
 
-      } else if (b.dataset.page === "print") {
+      } else if (b.dataset.page === "write-book") {
 
-        showPrint();
+        showBook("write");
 
       } else if (b.dataset.page === "image-import") {
 
