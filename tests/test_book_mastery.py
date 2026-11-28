@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from backend import db
 from backend.book_mastery import initialize_books_mastery, get_overview, list_book_senses, next_write_question, answer_write_question, guess_write_question, create_question
+from backend.mastery import set_word_unknown
 
 
 class IndependentBookMasteryTests(unittest.TestCase):
@@ -118,6 +119,26 @@ class IndependentBookMasteryTests(unittest.TestCase):
         self.assertEqual(result["interval_days"], 1)
         self.assertEqual(get_overview("read")["tests"], 0)
         self.assertEqual(get_overview("write")["tests"], 1)
+
+    def test_word_can_be_marked_unknown_and_unmarked(self):
+        marked = set_word_unknown("light", True)
+        self.assertTrue(marked["is_unknown"])
+        with db.get_db() as conn:
+            row = conn.execute("SELECT is_unknown FROM word_recognition WHERE word='light'").fetchone()
+        self.assertEqual(row["is_unknown"], 1)
+        cleared = set_word_unknown("light", False)
+        self.assertFalse(cleared["is_unknown"])
+        with db.get_db() as conn:
+            row = conn.execute("SELECT 1 FROM word_recognition WHERE word='light'").fetchone()
+        self.assertIsNone(row)
+
+    def test_write_question_can_include_not_yet_due_words(self):
+        with db.get_db() as conn:
+            conn.execute("UPDATE sense_mastery SET next_review_date='2999-01-01' WHERE mode='write'")
+            conn.commit()
+        self.assertTrue(next_write_question()["done"])
+        question = next_write_question(include_future=True)
+        self.assertFalse(question["done"])
 
 
 if __name__ == "__main__":
