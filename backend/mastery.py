@@ -934,7 +934,7 @@ def _distribute_print_words(word_groups, day_count=6):
         # date is a softer penalty so crowded due dates can be spread sensibly.
         chosen = min(
             candidates,
-            key=lambda i: ((loads[i] + weight) / target) + (abs(i - due_day) * 0.02)
+            key=lambda i: ((loads[i] + weight) / target) + (abs(i - due_day) * 0.04)
         )
         buckets[chosen].append(item)
         loads[chosen] += weight
