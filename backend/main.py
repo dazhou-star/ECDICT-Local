@@ -19,7 +19,7 @@ from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table
-from .mastery import init_mastery_tables, prepare_favorites, list_senses, set_sense_state, add_fragment, update_fragment, create_question, submit_answer, overview
+from .mastery import init_mastery_tables, prepare_favorites, list_senses, set_sense_state, add_fragment, update_fragment_by_order, update_fragment, create_question, submit_answer, overview
 
 class FavoriteRequest(BaseModel):
     word: str
@@ -780,6 +780,17 @@ def mastery_add_fragment(sense_id: int, payload: SenseFragmentRequest):
 def mastery_update_fragment(fragment_id: int, payload: SenseFragmentUpdateRequest):
     try:
         result = update_fragment(fragment_id, payload.fragment)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="找不到解释片段")
+    return result
+
+
+@app.patch("/api/mastery/senses/{sense_id}/fragments/{source_order}")
+def mastery_correct_fragment(sense_id: int, source_order: int, payload: SenseFragmentRequest):
+    try:
+        result = update_fragment_by_order(sense_id, source_order, payload.fragment)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     if result is None:
