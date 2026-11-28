@@ -2310,7 +2310,11 @@ function speakWord(word) {
 
         $("#welcome").hidden = false;
 
-      } else if (b.dataset.page === "mastery") {\n\n        showMastery();\n\n      } else if (b.dataset.page === "image-import") {
+      } else if (b.dataset.page === "mastery") {
+
+        showMastery();
+
+      } else if (b.dataset.page === "image-import") {
 
         showImageImport();
 
