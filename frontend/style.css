@@ -585,3 +585,52 @@ body.dark .word-stat-value>b {color:color-mix(in srgb,var(--stat-accent) 75%,whi
 .mastery-panel h3{font-size:16px;margin:24px 0 10px}.mastery-sense-list{display:grid;gap:8px}.mastery-sense{display:flex;justify-content:space-between;gap:14px;border:1px solid var(--line);border-radius:12px;padding:12px}.mastery-sense-main{min-width:0}.mastery-sense-main>b{font-size:15px}.mastery-sense-main small,.mastery-sense-meta span{font-size:11px;color:var(--muted)}.mastery-sense-main p{font-size:12px;line-height:1.5;margin:5px 0 0;overflow-wrap:anywhere}.mastery-sense-meta{display:flex;flex-direction:column;align-items:flex-end;gap:5px;white-space:nowrap}.mastery-sense-meta select{border:1px solid var(--line);border-radius:7px;padding:5px;background:var(--panel);color:var(--text);font-size:11px}
 .primary-action{border:0;border-radius:9px;padding:9px 15px;background:var(--blue);color:#fff;font-weight:600}.primary-action:disabled{opacity:.55}.write-question{margin:16px 0;padding:18px;border:1px solid var(--line);border-radius:13px;background:var(--panel2)}.write-prompt{font-size:21px;font-weight:700;margin:8px 0}.write-question form{display:flex;gap:8px;margin-top:14px}.write-question input{min-width:0;flex:1;border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--panel);color:var(--text)}.answer-correct{color:#168456}.answer-wrong{color:#c34b4b}.print-mode-options{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}.print-mode-options a{display:flex;flex-direction:column;gap:7px;padding:17px;border:1px solid var(--line);border-radius:12px;text-decoration:none;color:var(--text);background:var(--panel2)}.print-mode-options small{color:var(--muted);font-size:11px}
 @media(max-width:680px){.mastery-panel{padding:15px}.mastery-heading{flex-direction:column}.mastery-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.mastery-sense{flex-direction:column}.mastery-sense-meta{align-items:flex-start;white-space:normal}.print-mode-options{grid-template-columns:1fr}}
+
+
+/* ===== Editorial typography system ===== */
+:root{
+  --font-ui:Inter,"MiSans","HarmonyOS Sans SC","Noto Sans SC","Source Han Sans SC","Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif;
+  --font-editorial:"Iowan Old Style","Baskerville","Palatino Linotype",Georgia,"Noto Serif", "Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif;
+}
+body{
+  font-family:var(--font-ui);
+  font-synthesis:none;
+  text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased;
+}
+.brand b,
+.hero h1,
+.welcome h2,
+.entry .word,
+.collection-heading h2,
+.mastery-heading h2,
+.mastery-head h2,
+.image-import-header h2{
+  font-family:var(--font-editorial);
+  font-weight:700;
+  font-synthesis:style;
+  letter-spacing:-.025em;
+}
+.brand b{font-size:16px;letter-spacing:.13em}
+.hero h1{letter-spacing:-.045em}
+.entry .word{
+  font-size:36px;
+  line-height:1.12;
+  letter-spacing:-.035em;
+}
+.translation,
+.definition,
+.meaning-text,
+.definition-text,
+.translation-group{
+  font-family:var(--font-editorial);
+  font-synthesis:style;
+  font-weight:500;
+}
+.translation{line-height:1.9}
+.definition,.definition-text{line-height:1.85}
+body.dark .translation,
+body.dark .definition,
+body.dark .meaning-text,
+body.dark .definition-text{font-weight:500}
+@media(max-width:520px){.entry .word{font-size:31px}}
