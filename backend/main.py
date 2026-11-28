@@ -739,6 +739,9 @@ class SenseStateRequest(BaseModel):
 class SenseFragmentRequest(BaseModel):
     fragment: str
 
+class SenseFragmentUpdateRequest(BaseModel):
+    fragment: str
+
 class MasteryAnswerRequest(BaseModel):
     question_id: str
     answer: str
