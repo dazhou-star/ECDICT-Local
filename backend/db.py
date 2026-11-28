@@ -66,8 +66,11 @@ def init_favorites_table():
 
 
 def init_vocabulary_books():
-    """Create independent read/write vocabulary books and migrate legacy favorites to read."""
+    """Create independent read/write books; migrate legacy favorites only on first creation."""
     with get_db() as conn:
+        books_table_existed = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vocabulary_books'"
+        ).fetchone() is not None
         conn.execute("""
             CREATE TABLE IF NOT EXISTS vocabulary_books (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,11 +86,13 @@ def init_vocabulary_books():
             ON vocabulary_books(mode, study_date DESC, added_at DESC)
         """)
         # The former single favorites collection was used for reading vocabulary.
-        # Preserve its dates and entries; never infer that old entries belong to write.
-        conn.execute("""
-            INSERT OR IGNORE INTO vocabulary_books(word, mode, added_at, study_date)
-            SELECT word, 'read', added_at,
-                   COALESCE(NULLIF(study_date, ''), substr(added_at, 1, 10))
-            FROM favorites
-        """)
+        # Run this migration only when the new table is first created. Replaying it
+        # on every startup would resurrect words deliberately removed from the book.
+        if not books_table_existed:
+            conn.execute("""
+                INSERT OR IGNORE INTO vocabulary_books(word, mode, added_at, study_date)
+                SELECT word, 'read', added_at,
+                       COALESCE(NULLIF(study_date, ''), substr(added_at, 1, 10))
+                FROM favorites
+            """)
         conn.commit()
