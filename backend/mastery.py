@@ -156,7 +156,7 @@ def prepare_favorites():
                 + timedelta(days=1)
             ).isoformat()
             existing = conn.execute(
-                "SELECT id, review_state FROM word_senses "
+                "SELECT id, review_state, source_order, pos FROM word_senses "
                 "WHERE word = ? COLLATE NOCASE AND mode='read'",
                 (word,),
             ).fetchall()
