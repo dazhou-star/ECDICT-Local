@@ -400,75 +400,97 @@ def _pos_family(pos):
 
 
 def _meaning_similarity(left, right):
-    a = set(re.findall(r"[\u3400-\u9fff]", left or ""))
-    b = set(re.findall(r"[\u3400-\u9fff]", right or ""))
+    """A lightweight character-set similarity check, not a semantic model."""
+    a = set(re.findall(r"[\\u3400-\\u9fff]", left or ""))
+    b = set(re.findall(r"[\\u3400-\\u9fff]", right or ""))
     if not a or not b:
         return 0.0
     return len(a & b) / max(1, len(a | b))
 
 
+def _too_similar_meaning(left, right, threshold=0.25):
+    """Reject exact/contained glosses and obvious lexical near-duplicates."""
+    left_key, right_key = _norm(left), _norm(right)
+    if not left_key or not right_key:
+        return True
+    if left_key == right_key or left_key in right_key or right_key in left_key:
+        return True
+    return _meaning_similarity(left, right) >= threshold
+
+
 def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
-    """Find hard distractors from all ECDICT entries, not just favorites."""
+    """Choose distinct same-POS distractors from ECDICT, with practical fallbacks.
+
+    Chinese-character overlap is used only to reject obvious near-duplicates;
+    it is never used to seek similar-looking meanings.
+    """
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
     if "translation" not in columns:
         return []
-    chars = list(dict.fromkeys(
-        char for char in re.findall(r"[\u3400-\u9fff]", correct)
-        if char not in "的了是和与及或其一个不在有为"
-    ))
-    random.shuffle(chars)
+
+    maximum = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM words").fetchone()[0]
+    if not maximum:
+        return []
+
+    # Sample several bounded rowid windows so candidate discovery does not
+    # depend on Chinese LIKE searches or repeatedly favor nearby dictionary rows.
     rows_by_word = {}
-    # Shared Chinese characters produce a useful, bounded semantic neighborhood.
-    for char in chars[:4]:
+    for _ in range(6):
+        start = random.randint(1, maximum)
         rows = conn.execute(
-            "SELECT word, translation FROM words WHERE translation LIKE ? AND word<>? COLLATE NOCASE LIMIT 120",
-            ("%" + char + "%", target_word),
+            """SELECT word, translation FROM words
+               WHERE rowid>=? AND translation<>'' AND word<>? COLLATE NOCASE
+               LIMIT 900""",
+            (start, target_word),
         ).fetchall()
         for row in rows:
             rows_by_word.setdefault(row["word"].casefold(), row)
-    # If that neighborhood is small, sample a bounded window from the entire dictionary.
-    if len(rows_by_word) < 80:
-        maximum = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM words").fetchone()[0]
-        if maximum:
-            start = random.randint(1, max(1, maximum))
-            sampled = conn.execute(
-                "SELECT word, translation FROM words WHERE rowid>=? AND translation<>'' AND word<>? COLLATE NOCASE LIMIT 700",
-                (start, target_word),
-            ).fetchall()
-            for row in sampled:
-                rows_by_word.setdefault(row["word"].casefold(), row)
+        if len(rows_by_word) >= 2500:
+            break
 
     target_family = _pos_family(target_pos)
-    correct_norm = _norm(correct)
-    ranked = []
+    same_pos, other_pos = [], []
+    seen_glosses = {_norm(correct)}
     for row in rows_by_word.values():
         for candidate_pos, fragments in split_translation(row["translation"] or ""):
-            if _pos_family(candidate_pos) != target_family:
-                continue
+            destination = same_pos if _pos_family(candidate_pos) == target_family else other_pos
             for value in fragments:
                 key = _norm(value)
-                if not key or key == correct_norm or len(value) < 2:
+                if len(value) < 2 or not key or key in seen_glosses:
                     continue
-                if key in correct_norm or correct_norm in key:
+                if key in _norm(correct) or _norm(correct) in key:
                     continue
-                overlap = _meaning_similarity(correct, value)
-                length_score = 1.0 - min(1.0, abs(len(value) - len(correct)) / max(5, len(correct) * 1.5))
-                # Prefer similar-length phrases with partial lexical overlap, not duplicates.
-                if overlap < 0.12 or overlap > 0.72:
-                    continue
-                ranked.append((overlap * 0.65 + length_score * 0.35, value))
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    selected, seen = [], {correct_norm}
-    for _, value in ranked:
-        key = _norm(value)
-        if key in seen:
+                seen_glosses.add(key)
+                destination.append(value)
+
+    random.shuffle(same_pos)
+    random.shuffle(other_pos)
+    selected = []
+
+    # First pass: clearly different meanings, including avoiding near-duplicate
+    # options among the distractors themselves.
+    for value in same_pos:
+        if any(_too_similar_meaning(value, chosen) for chosen in [correct, *selected]):
             continue
-        seen.add(key)
         selected.append(value)
         if len(selected) >= limit:
-            break
-    return selected
+            return selected
 
+    # Fallback: keep four options available. Relax only the lexical-overlap
+    # filter; still exclude exact matches and obvious substring duplicates.
+    for pool in (same_pos, other_pos):
+        for value in pool:
+            key = _norm(value)
+            if any(_norm(value) == _norm(chosen) for chosen in [correct, *selected]):
+                continue
+            if key in _norm(correct) or _norm(correct) in key:
+                continue
+            if any(key == _norm(chosen) for chosen in selected):
+                continue
+            selected.append(value)
+            if len(selected) >= limit:
+                return selected
+    return selected
 
 def create_question():
     today = date.today().isoformat()
