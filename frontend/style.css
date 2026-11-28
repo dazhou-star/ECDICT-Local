@@ -568,3 +568,10 @@ body.dark .word-stat-value>b {color:color-mix(in srgb,var(--stat-accent) 75%,whi
 .fragment-save{border:0;border-radius:5px;padding:4px 6px;background:var(--panel);color:var(--blue);font-size:10px;cursor:pointer}
 
 .fragment-split{border:0;border-radius:5px;padding:4px 6px;background:rgba(196,119,53,.12);color:#c47735;font-size:10px;cursor:pointer}
+
+/* Independent read/write vocabulary book controls */
+.book-save-actions{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+.book-save-actions .save{white-space:nowrap}
+.image-book-target{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}
+.image-book-target select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel);color:var(--text);font:inherit}
+@media(max-width:640px){.entry-head{align-items:flex-start;flex-direction:column}.book-save-actions{width:100%}}
