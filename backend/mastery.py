@@ -915,7 +915,7 @@ def _distribute_print_words(word_groups, day_count=6):
         return [[] for _ in range(day_count)]
     total_weight = sum(max(1, int(item.get("weight", 1))) for item in word_groups)
     target = max(1.0, total_weight / day_count)
-    capacity = max(1, int((target * 1.35) + 0.9999))
+    capacity = max(1, max(int(item.get("weight", 1)) for item in word_groups), int((target * 1.35) + 0.9999))
     buckets = [[] for _ in range(day_count)]
     loads = [0] * day_count
 
@@ -987,13 +987,16 @@ def export_print_data():
             all_words[word.casefold()] = item
 
         # Fragment count is a better workload estimate than word count alone.
-        for key, group in senses_by_word.items():
+        fragment_counts = {
+            row["sense_id"]: row["fragment_count"]
+            for row in conn.execute(
+                """SELECT sense_id, COUNT(*) AS fragment_count
+                   FROM sense_fragments WHERE enabled=1 GROUP BY sense_id"""
+            ).fetchall()
+        }
+        for group in senses_by_word.values():
             for sense in group["senses"]:
-                fragment_count = conn.execute(
-                    "SELECT COUNT(*) FROM sense_fragments WHERE sense_id=? AND enabled=1",
-                    (sense["sense_id"],),
-                ).fetchone()[0]
-                group["weight"] += max(1, fragment_count)
+                group["weight"] += max(1, fragment_counts.get(sense["sense_id"], 0))
 
         groups = list(senses_by_word.values())
         for group in groups:
