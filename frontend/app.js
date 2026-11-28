@@ -2040,52 +2040,68 @@ function speakWord(word) {
     status('每周复习纸带');
     $('#results').innerHTML = `
       <section class="roll-print-panel roll-weekly-panel">
-        <header class="roll-print-head"><div><div class="collection-kicker">WEEKLY REVIEW STRIP</div><h2>每周复习纸带</h2><p>自动安排下周七天的复习内容</p></div><b>80 mm</b></header>
-        <div class="roll-print-controls"><button id="printRoll" class="roll-print-primary">打印纸带</button><span id="printStatus">正在生成下周复习计划…</span></div>
+        <header class="roll-print-head"><div><div class="collection-kicker">WEEKLY REVIEW STRIP</div><h2>每周复习纸带</h2><p>自动均衡安排下周周日至周五；周六留作补做日</p></div><b>80 mm</b></header>
+        <div class="roll-print-controls">
+          <a class="roll-print-link" href="/print" target="_blank" rel="noopener">打开纯纸条页面 ↗</a>
+          <button id="printRoll" class="roll-print-primary">系统打印</button>
+          <span id="printStatus">正在生成复习计划…</span>
+        </div>
         <div id="printSheet" class="roll-print-sheet"></div>
       </section>`;
     const sheet = $('#printSheet');
     const statusEl = $('#printStatus');
-    const formLabels = { p: '复数', d: '过去式', i: '现在分词', '3': '第三人称单数', r: '比较级', t: '最高级' };
-    function formatForms(value) {
-      if (!value) return '';
-      const parts = String(value).split('/').map(part => {
-        const index = part.indexOf(':');
-        if (index < 0) return '';
-        const code = part.slice(0, index).trim();
-        const form = part.slice(index + 1).trim();
-        return form ? `<span><em>${esc(formLabels[code] || '其他词形')}</em>${esc(form)}</span>` : '';
-      }).filter(Boolean);
-      return parts.length ? `<div class="roll-word-forms">${parts.join('')}</div>` : '';
+    function printForms(value, baseWord) {
+      const forms = parseExchange(value);
+      const byCode = Object.fromEntries(forms.map(item => [item.code, item.word]));
+      const irregular = getIrregularForms(baseWord, byCode);
+      const doubled = getDoubledVerbForms(baseWord, byCode);
+      const labels = { p: '过去式', d: '过去分词', i: '现在分词', '3': '第三人称单数' };
+      const selected = ['p', 'd', 'i', '3'].filter(code =>
+        byCode[code] && (irregular.includes(code) || doubled.includes(code))
+      );
+      if (!selected.length) return '';
+      return `<div class="roll-word-forms">${selected.map(code => {
+        const isIrregular = irregular.includes(code);
+        return `<span><em>${labels[code]}</em>${esc(byCode[code])}<small>${isIrregular ? '不规则' : '双写'}</small></span>`;
+      }).join('')}</div>`;
     }
     function render(data) {
-      let html = `<h2>下周复习计划</h2><p class="roll-week-range">${esc(data.week_start)} — ${esc(data.week_end)}</p>`;
-      data.days.forEach((day, dayIndex) => {
+      let html = `<h2>每周复习纸带</h2><p class="roll-week-range">${esc(data.week_start)} — ${esc(data.week_end)}</p>`;
+      let questionNo = 0;
+      const answerRows = [];
+      data.days.forEach(day => {
         html += `<section class="roll-day"><h3>${esc(day.label)}　${esc(day.date)}</h3>`;
-        if (!day.words.length && !day.exercises.length) { html += '<p class="roll-empty-day">当天没有安排复习</p></section>'; return; }
+        if (!day.words.length && !day.exercises.length) {
+          html += '<p class="roll-empty-day">当天没有安排复习</p></section>';
+          return;
+        }
         if (day.words.length) {
           html += `<h4>复习单词（${day.words.length}）</h4>`;
-          html += day.words.map((w,i) => `<article class="roll-word"><b>${i+1}. ${esc(w.word)}</b>${w.phonetic ? `<small>${esc(w.phonetic)}</small>` : ''}<div>${esc(w.pos || '')}</div><p>${esc(w.translation || '暂无中文释义')}</p>${formatForms(w.exchange)}</article>`).join('');
+          html += day.words.map((w,i) => `<article class="roll-word"><b>${i+1}. ${esc(w.word)}</b>${w.phonetic ? `<small>${esc(w.phonetic)}</small>` : ''}<div>${esc(w.pos || '')}</div><p>${esc(w.translation || '暂无中文释义')}</p>${printForms(w.exchange,w.word)}</article>`).join('');
         }
         if (day.exercises.length) {
           html += `<h4>检测练习（${day.exercises.length}题）</h4>`;
-          html += day.exercises.map((q,i) => `<article class="roll-question"><b>${i+1}. ${esc(q.word)}</b><ol type="A">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol><p>作答： □ A　□ B　□ C　□ D</p></article>`).join('');
-        } else { html += '<p class="roll-empty-day">暂无可生成的四选一练习</p>'; }
+          html += day.exercises.map(q => {
+            questionNo++;
+            answerRows.push(`<p class="roll-answer-key">${questionNo}. ${esc(day.label)} · ${esc(q.word)}：${'ABCD'[q.answer]} — ${esc(q.meaning)}</p>`);
+            return `<article class="roll-question"><b>${questionNo}. ${esc(q.word)}</b><ol type="A">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol><p>作答： □ A　□ B　□ C　□ D</p></article>`;
+          }).join('');
+        }
         html += '</section>';
       });
-      html += '<section class="roll-answer-section"><h3>本周答案区</h3>';
-      let answerNo = 0;
-      data.days.forEach(day => day.exercises.forEach(q => { answerNo++; html += `<p class="roll-answer-key">${answerNo}. ${esc(day.label)} · ${esc(q.word)}：${'ABCD'[q.answer]} — ${esc(q.meaning)}</p>`; }));
-      html += '</section><p class="roll-print-end">— LEXICON · END —</p>';
+      html += `<section class="roll-answer-section"><h3>本周答案区</h3>${answerRows.join('') || '<p>本周暂无练习题</p>'}</section><p class="roll-print-end">— LEXICON · END —</p>`;
       sheet.innerHTML = html;
-      statusEl.textContent = `已安排 ${data.counts.words} 个单词、${data.counts.exercises} 道练习；${data.counts.skipped_exercises} 个片段因干扰项不足未生成题目。`;
+      const daily = (data.counts.daily_word_counts || []).join(' / ');
+      statusEl.textContent = `已安排 ${data.counts.words} 个单词、${data.counts.exercises} 道练习；每日单词数：${daily}；${data.counts.skipped_exercises} 个片段因干扰项不足未生成题目。`;
     }
-    try {
-      const data = await api('/api/print/data');
-      render(data);
-      $('#printRoll').disabled = data.counts.words === 0;
-      if (!data.counts.words) statusEl.textContent = '下周没有已安排的复习内容。';
-    } catch (e) { statusEl.textContent = '生成失败：' + e.message; }
+    (async () => {
+      try {
+        const data = await api('/api/print/data');
+        render(data);
+        $('#printRoll').disabled = data.counts.words === 0;
+        if (!data.counts.words) statusEl.textContent = '下周没有已安排的复习内容。';
+      } catch (e) { statusEl.textContent = '生成失败：' + e.message; }
+    })();
     $('#printRoll').addEventListener('click', () => {
       if (!sheet.innerHTML.trim()) return;
       document.body.classList.add('printing-roll');
@@ -2094,6 +2110,7 @@ function speakWord(word) {
       setTimeout(() => document.body.classList.remove('printing-roll'), 1500);
     });
   }
+
   async function showMastery() {
     state.page = "mastery";
     setSide("mastery");
