@@ -20,6 +20,7 @@ from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table, init_vocabulary_books
 from .book_mastery import initialize_books_mastery, get_overview, list_book_senses, set_sense_state, next_write_question, answer_write_question, guess_write_question, create_question, submit_answer, export_book_print
+from .mastery import set_word_unknown
 
 class VocabularyBookRequest(BaseModel):
     word: str
@@ -660,8 +661,9 @@ def list_vocabulary_book(mode: str):
     mode = validate_book_mode(mode)
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT word, added_at, study_date FROM vocabulary_books
-               WHERE mode=? ORDER BY study_date DESC, added_at DESC, id DESC""",
+            """SELECT b.word, b.added_at, b.study_date, COALESCE(r.is_unknown,0) AS is_unknown
+               FROM vocabulary_books b LEFT JOIN word_recognition r ON r.word=b.word COLLATE NOCASE AND r.is_unknown=1
+               WHERE b.mode=? ORDER BY b.study_date DESC, b.added_at DESC, b.id DESC""",
             (mode,),
         ).fetchall()
     return {"mode": mode, "items": [dict(row) for row in rows]}
@@ -873,8 +875,8 @@ def mastery_set_sense_state(mode: str, sense_id: int, payload: dict):
 
 
 @app.get("/api/mastery/read/question")
-def mastery_read_question():
-    return create_question()
+def mastery_read_question(include_future: bool = Query(False)):
+    return create_question(include_future=include_future)
 
 
 @app.post("/api/mastery/read/answer")
@@ -900,8 +902,8 @@ def mastery_write_guess(payload: WriteAnswerRequest):
 
 
 @app.post("/api/mastery/write/question")
-def mastery_write_question():
-    return next_write_question()
+def mastery_write_question(include_future: bool = Query(False)):
+    return next_write_question(include_future=include_future)
 
 
 @app.post("/api/mastery/write/answer")
@@ -913,6 +915,17 @@ def mastery_write_answer(payload: WriteAnswerRequest):
     if result is None:
         raise HTTPException(status_code=404, detail="题目不存在或已失效")
     return result
+
+@app.post("/api/words/{word}/unknown")
+def mark_word_unknown(word: str, payload: dict):
+    word = clean_word(word)
+    try:
+        return set_word_unknown(
+            word, bool(payload.get("unknown", True)),
+            mode=payload.get("mode"), question_id=payload.get("question_id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @app.get("/api/print/{mode}/data")
