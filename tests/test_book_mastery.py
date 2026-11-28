@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend import db
-from backend.book_mastery import initialize_books_mastery, get_overview, list_book_senses, next_write_question, answer_write_question, guess_write_question
+from backend.book_mastery import initialize_books_mastery, get_overview, list_book_senses, next_write_question, answer_write_question, guess_write_question, create_question
 
 
 class IndependentBookMasteryTests(unittest.TestCase):
@@ -100,6 +100,14 @@ class IndependentBookMasteryTests(unittest.TestCase):
         self.assertIn("首字母", first["hint"])
         self.assertIn("字母", second["hint"])
         self.assertEqual(get_overview("write")["tests"], 0)
+
+    def test_read_book_multiple_choice_detection_is_available_again(self):
+        with patch("backend.mastery._dictionary_distractors", return_value=["苹果", "树木", "书本"]):
+            question = create_question()
+        self.assertFalse(question["done"])
+        self.assertEqual(len(question["options"]), 4)
+        self.assertTrue(question["word"])
+
 
     def test_write_question_uses_chinese_prompt_and_spelling_answer(self):
         question = next_write_question()
