@@ -1,20 +1,20 @@
 *{box-sizing:border-box}
 html,body{margin:0;width:100%;background:#e9edf2;color:#111;font-family:Arial,"Microsoft YaHei",sans-serif}
-.paper{width:80mm;min-height:100vh;margin:12px auto;padding:2mm;background:#fff;box-shadow:0 2px 16px #0002;font-size:10pt}
+.paper{display:block;width:80mm;min-height:100vh;margin:12px auto;padding:2mm;background:#fff;box-shadow:0 2px 16px #0002;font-size:10pt}
 .paper-head{text-align:center;border-bottom:1px solid #222;padding-bottom:3mm;margin-bottom:3mm}
 .paper-head h1{font-size:15pt;margin:0 0 2mm}
 .paper-head p{font-size:8pt;margin:1mm 0}
-.day{width:100%;margin:0 0 4mm;break-inside:avoid}
+.day{display:block;width:100%;margin:0 0 4mm;break-inside:avoid}
 .day h2,.answer-key h2{font-size:11pt;border-bottom:1px solid #555;padding:1mm 0;margin:0 0 2mm}
-.word{width:100%;padding:1.5mm 0;border-bottom:1px dotted #aaa;break-inside:avoid}
+.word{display:block;width:100%;padding:1.5mm 0;border-bottom:1px dotted #aaa;break-inside:avoid}
 .word b{font-size:11pt}
 .phonetic{font-size:8pt;margin-left:2mm}
 .word small,.exercise small{font-size:7.5pt;color:#555;margin-left:2mm}
 .word p{font-size:8.5pt;line-height:1.35;margin:1mm 0 0;white-space:pre-wrap}
-.exercise{width:100%;padding:2mm 0;border-bottom:1px dotted #aaa;break-inside:avoid}
+.exercise{display:block;width:100%;padding:2mm 0;border-bottom:1px dotted #aaa;break-inside:avoid}
 .prompt{font-size:10pt;line-height:1.4}
 .blank{font-size:9pt;margin-top:3mm;letter-spacing:.2px}
-.answer-key{width:100%;border-top:2px solid #111;margin-top:7mm;padding-top:3mm;break-before:page}
+.answer-key{display:block;width:100%;border-top:2px solid #111;margin-top:7mm;padding-top:3mm;break-before:page}
 .answer-key p{font-size:9pt;margin:2mm 0}
 .answer-key small{display:block;font-size:7.5pt;color:#555}
 .muted{font-size:8pt;color:#777}
@@ -22,9 +22,11 @@ html,body{margin:0;width:100%;background:#e9edf2;color:#111;font-family:Arial,"M
 footer{text-align:center;font-size:6.5pt;color:#666;border-top:1px solid #aaa;margin-top:5mm;padding-top:2mm}
 @page{size:80mm 2000mm;margin:0}
 @media print{
-  html,body{width:100%;margin:0;padding:0;background:#fff}
-  .paper{display:block;width:100%;min-height:0;margin:0;padding:2mm;box-shadow:none}
-  .paper-head,.day,.word,.exercise,.answer-key,footer{width:100%}
+  html,body{display:block;width:100%;min-width:0;max-width:none;margin:0!important;padding:0!important;background:#fff}
+  body{overflow:visible}
+  main#paper.paper{display:block!important;position:static!important;float:none!important;box-sizing:border-box;width:100%!important;min-width:0!important;max-width:none!important;min-height:0;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important}
+  main#paper.paper>*{box-sizing:border-box;width:100%;max-width:none}
+  .paper-head,.day,.word,.exercise,.answer-key,footer{width:100%;max-width:none}
   .day{break-inside:auto}
   .word,.exercise{break-inside:avoid}
   .answer-key{break-before:page}
