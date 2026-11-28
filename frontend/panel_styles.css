@@ -1067,7 +1067,7 @@ body.printing-roll .shell, body.printing-roll .shell * { visibility:hidden !impo
 body.printing-roll #printSheet, body.printing-roll #printSheet * { visibility:visible !important; }
 body.printing-roll #printSheet { position:absolute; top:0; left:0; width:76mm; max-width:none; margin:0; padding:0; border:0; box-shadow:none; }
 @media print {
-  @page { size:80mm auto; margin:2mm; }
+  @page { size:80mm 2000mm; margin:2mm; }
   html,body { width:80mm !important; margin:0 !important; padding:0 !important; background:#fff !important; }
   body.printing-roll .shell, body.printing-roll .shell * { visibility:hidden !important; }
   body.printing-roll #printSheet, body.printing-roll #printSheet * { visibility:visible !important; }
