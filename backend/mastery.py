@@ -476,16 +476,24 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
         if len(selected) >= limit:
             return selected
 
-    # Fallback: keep four options available. Relax only the lexical-overlap
-    # filter; still exclude exact matches and obvious substring duplicates.
+    # Second pass: use other parts of speech before relaxing the similarity
+    # filter, so the question still gets three distinct distractors in normal
+    # dictionary conditions.
+    for value in other_pos:
+        if any(_too_similar_meaning(value, chosen) for chosen in [correct, *selected]):
+            continue
+        selected.append(value)
+        if len(selected) >= limit:
+            return selected
+
+    # Last-resort fallback: four choices take priority over perfect distractor
+    # quality. Exact duplicates and direct substring variants remain excluded.
     for pool in (same_pos, other_pos):
         for value in pool:
             key = _norm(value)
-            if any(_norm(value) == _norm(chosen) for chosen in [correct, *selected]):
+            if not key or any(key == _norm(chosen) for chosen in [correct, *selected]):
                 continue
             if key in _norm(correct) or _norm(correct) in key:
-                continue
-            if any(key == _norm(chosen) for chosen in selected):
                 continue
             selected.append(value)
             if len(selected) >= limit:
