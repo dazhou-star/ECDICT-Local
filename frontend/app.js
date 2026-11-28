@@ -2043,8 +2043,7 @@ function speakWord(word) {
         <header class="mastery-head"><div><div class="collection-kicker">READING MASTERY</div><h2>单词掌握检测</h2><p>按义项独立追踪掌握程度；每次从该义项的解释片段中抽题。</p></div></header>
         <div class="mastery-stats" id="masteryStats">正在读取学习状态…</div>
         <div class="mastery-actions">
-          <button class="mastery-primary" id="prepareMastery">从生词本生成待校对义项</button>
-          <button class="mastery-secondary" id="reviewDrafts">校对待审核义项</button>
+          <button class="mastery-primary" id="prepareMastery">生成 / 更新学习数据</button>
           <button class="mastery-secondary" id="startMastery">开始检测</button>
         </div>
         <div id="masteryContent"></div>
@@ -2053,11 +2052,11 @@ function speakWord(word) {
       try {
         const d = await api("/api/mastery/prepare", {method:"POST"});
         await refreshMasteryStats();
-        await showSenseReview();
-        status(`解析完成：新增 ${d.created_words} 个单词、${d.created_senses} 个义项`);
+        const activated = d.activated_senses ?? d.created_senses ?? 0;
+        $("#masteryContent").innerHTML = '<p class="mastery-empty">学习数据已生成，义项已自动启用。系统会随机抽取各义项中的不同中文解释进行检测，无需人工校对。</p>';
+        status(`生成完成：新增 ${d.created_words} 个单词、${d.created_senses} 个义项，启用 ${activated} 个义项`);
       } catch(e) { status("生成失败："+e.message); }
     });
-    $("#reviewDrafts").addEventListener("click", showSenseReview);
     $("#startMastery").addEventListener("click", nextMasteryQuestion);
     await refreshMasteryStats();
   }
@@ -2067,7 +2066,7 @@ function speakWord(word) {
     const el = $("#masteryStats");
     if (!el) return;
     el.innerHTML = [
-      ["生词本单词",d.favorites],["已拆分义项",d.senses],["待校对",d.drafts],
+      ["生词本单词",d.favorites],["已拆分义项",d.senses],["待处理",d.drafts],
       ["已启用",d.active],["今日到期",d.due],["累计检测",d.tests]
     ].map(([k,v]) => `<div><span>${esc(k)}</span><b>${Number(v).toLocaleString()}</b></div>`).join("");
   }
@@ -2142,7 +2141,7 @@ function speakWord(word) {
     try {
       const qdata = await api("/api/mastery/question");
       if (qdata.done) {
-        target.innerHTML = `<div class="mastery-empty"><h3>${qdata.message || "今日到期义项已完成"}</h3><p>${qdata.next_review_date ? "下次复习日期："+esc(qdata.next_review_date) : "请先校对并启用一些义项。"}</p></div>`;
+        target.innerHTML = `<div class="mastery-empty"><h3>${qdata.message || "今日到期义项已完成"}</h3><p>${qdata.next_review_date ? "下次复习日期："+esc(qdata.next_review_date) : "请先生成学习数据，再开始检测。"}</p></div>`;
         await refreshMasteryStats();
         return;
       }
