@@ -5,7 +5,10 @@ from difflib import SequenceMatcher
 from .db import connect
 
 def _escape_like(value: str) -> str:
-    return value.replace("!", "!!").repdef _frequency_rank(row):
+    return value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
+def _frequency_rank(row):
     try:
         value = int(row["frq"] or 0)
         return value if value > 0 else 2147483647
@@ -100,9 +103,6 @@ def search_words(q: str, limit: int = 15, offset: int = 0, mode: str = "prefix")
             str(item["word"]).casefold(),
         ))
         return ranked[offset:offset + limit]
-    finally:
-        conn.close()
-]
     finally:
         conn.close()
 
