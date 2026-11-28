@@ -492,7 +492,7 @@
 
           <b>${esc(item.word)}</b>
 
-          <small>${esc(item.translation || item.definition || "查看词条")}</small>
+          <small>${item.match_type === "fuzzy" ? '<em class="suggestion-match">近似匹配</em> ' : ""}${esc(item.translation || item.definition || "查看词条")}</small>
 
         `;
 
@@ -1264,10 +1264,22 @@ function speakWord(word) {
 
 
 
+  function renderComparisons(items) {
+    if (!Array.isArray(items) || !items.length) return "";
+    return '<section class="section comparison-section">' +
+      '<div class="section-title">词语辨析</div><div class="comparison-list">' +
+      items.map(item =>
+        '<article class="comparison-item"><div class="comparison-words">' +
+        esc(item.title || (item.words || []).join(", ")) +
+        '</div><div class="comparison-content">' + esc(item.content || "") +
+        '</div></article>'
+      ).join("") + '</div></section>';
+  }
+
   function renderWord(entry) {
     const word = entry.word || "";
     const raw = Object.entries(entry).filter(
-      ([, v]) => v !== null && v !== undefined && v !== ""
+      ([key, v]) => key !== "comparisons" && v !== null && v !== undefined && v !== ""
     );
     const phonetic = entry.phonetic || entry.phonetic_us || entry.phonetic_uk || "";
 
@@ -1294,6 +1306,7 @@ function speakWord(word) {
 
         ${renderTranslation(entry.translation)}
         ${renderDefinitions(entry.definition)}
+        ${renderComparisons(entry.comparisons)}
         ${renderVocabulary(entry)}
         ${renderWordStats(entry)}
         ${renderExchange(entry.exchange, word, entry.pos)}
