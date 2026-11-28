@@ -7,10 +7,10 @@ from uuid import uuid4
 
 from .db import get_db
 
-POS_RE = re.compile(r"(?i)(?<![A-Za-z])(adj|adv|vt|vi|v|n|prep|pron|conj|int|art|aux|abbr|num|det)\.\s*")
+POS_RE = re.compile(r"(?i)(?<![A-Za-z])(adj|adv|vt|vi|v|n|prep|pron|conj|int|art|aux|abbr|num|det|ad|a)\.\s*")
 POS_NAMES = {
     "n": "名词", "v": "动词", "vt": "及物动词", "vi": "不及物动词",
-    "adj": "形容词", "adv": "副词", "prep": "介词", "pron": "代词",
+    "adj": "形容词", "a": "形容词", "adv": "副词", "ad": "副词", "prep": "介词", "pron": "代词",
     "conj": "连词", "int": "感叹词", "art": "冠词", "aux": "助动词",
     "abbr": "缩写", "num": "数词", "det": "限定词",
 }
