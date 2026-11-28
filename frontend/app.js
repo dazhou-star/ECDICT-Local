@@ -2030,6 +2030,120 @@ function speakWord(word) {
     }
   });
 
+
+  async function showMastery() {
+    state.page = "mastery";
+    setSide("mastery");
+    hideSuggestions();
+    $("#welcome").hidden = true;
+    $("#empty").hidden = true;
+    status("单词掌握检测");
+    $("#results").innerHTML = `
+      <section class="mastery-panel">
+        <header class="mastery-head"><div><div class="collection-kicker">READING MASTERY</div><h2>单词掌握检测</h2><p>按义项独立追踪掌握程度；每次从该义项的解释片段中抽题。</p></div></header>
+        <div class="mastery-stats" id="masteryStats">正在读取学习状态…</div>
+        <div class="mastery-actions">
+          <button class="mastery-primary" id="prepareMastery">从生词本生成待校对义项</button>
+          <button class="mastery-secondary" id="reviewDrafts">校对待审核义项</button>
+          <button class="mastery-secondary" id="startMastery">开始检测</button>
+        </div>
+        <div id="masteryContent"></div>
+      </section>`;
+    $("#prepareMastery").addEventListener("click", async () => {
+      try {
+        const d = await api("/api/mastery/prepare", {method:"POST"});
+        await refreshMasteryStats();
+        await showSenseReview();
+        status(`解析完成：新增 ${d.created_words} 个单词、${d.created_senses} 个义项`);
+      } catch(e) { status("生成失败："+e.message); }
+    });
+    $("#reviewDrafts").addEventListener("click", showSenseReview);
+    $("#startMastery").addEventListener("click", nextMasteryQuestion);
+    await refreshMasteryStats();
+  }
+
+  async function refreshMasteryStats() {
+    const d = await api("/api/mastery/overview");
+    const el = $("#masteryStats");
+    if (!el) return;
+    el.innerHTML = [
+      ["生词本单词",d.favorites],["已拆分义项",d.senses],["待校对",d.drafts],
+      ["已启用",d.active],["今日到期",d.due],["累计检测",d.tests]
+    ].map(([k,v]) => `<div><span>${esc(k)}</span><b>${Number(v).toLocaleString()}</b></div>`).join("");
+  }
+
+  async function showSenseReview() {
+    const data = await api("/api/mastery/senses?state=draft");
+    const target = $("#masteryContent");
+    if (!target) return;
+    if (!data.items.length) {
+      target.innerHTML = '<p class="mastery-empty">没有待校对义项。你可以重新生成；已存在的校对结果不会被覆盖。</p>';
+      return;
+    }
+    target.innerHTML = `
+      <div class="mastery-subhead"><h3>待校对义项（${data.items.length}）</h3><span>自动拆分仅作初稿，确认后才参与检测</span></div>
+      <div class="sense-list">${data.items.map(item => `
+        <article class="sense-card" data-sense-id="${item.id}">
+          <div class="sense-word"><b>${esc(item.word)}</b><span>${esc(item.pos || "未标注词性")}</span></div>
+          <div class="sense-fragments">${(item.fragments || "").split("；").filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join("")}</div>
+          <div class="sense-source">原始释义：${esc(item.source_translation || "")}</div>
+          <div class="sense-edit"><input class="new-fragment" maxlength="160" placeholder="添加或修正一个解释片段"><button data-sense-action="add">添加片段</button></div>
+          <div class="sense-buttons"><button data-sense-action="active">确认并启用</button><button data-sense-action="ignored">暂不学习</button></div>
+        </article>`).join("")}</div>`;
+    target.querySelectorAll("[data-sense-action]").forEach(button => button.addEventListener("click", async () => {
+      const card = button.closest("[data-sense-id]");
+      const id = card.dataset.senseId;
+      try {
+        if (button.dataset.senseAction === "add") {
+          const input = card.querySelector(".new-fragment");
+          if (!input.value.trim()) return;
+          await api(`/api/mastery/senses/${id}/fragments`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fragment:input.value.trim()})});
+          await showSenseReview();
+        } else {
+          await api(`/api/mastery/senses/${id}`, {method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:button.dataset.senseAction})});
+          await refreshMasteryStats();
+          await showSenseReview();
+        }
+      } catch(e) { status("义项操作失败："+e.message); }
+    }));
+  }
+
+  async function nextMasteryQuestion() {
+    const target = $("#masteryContent");
+    target.innerHTML = '<p class="mastery-empty">正在抽取到期义项…</p>';
+    try {
+      const qdata = await api("/api/mastery/question");
+      if (qdata.done) {
+        target.innerHTML = `<div class="mastery-empty"><h3>${qdata.message || "今日到期义项已完成"}</h3><p>${qdata.next_review_date ? "下次复习日期："+esc(qdata.next_review_date) : "请先校对并启用一些义项。"}</p></div>`;
+        await refreshMasteryStats();
+        return;
+      }
+      target.innerHTML = `
+        <article class="quiz-card">
+          <div class="quiz-meta">读模式 · 选择最符合的中文含义 · ${esc(qdata.pos || "")}</div>
+          <h3>${esc(qdata.word)}</h3>
+          <p>这个单词在当前义项中表示：</p>
+          <div class="quiz-options">${qdata.options.map((option,i)=>`<button data-answer-index="${i}"><span>${String.fromCharCode(65+i)}</span>${esc(option)}</button>`).join("")}</div>
+          <div id="quizFeedback"></div>
+          <button class="mastery-secondary quiz-next" id="nextQuiz" hidden>下一题</button>
+        </article>`;
+      target.querySelectorAll("[data-answer-index]").forEach(button => button.addEventListener("click", async () => {
+        if (button.disabled) return;
+        target.querySelectorAll("[data-answer-index]").forEach(x=>x.disabled=true);
+        const answer=qdata.options[Number(button.dataset.answerIndex)];
+        try {
+          const result=await api("/api/mastery/answer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question_id:qdata.question_id,answer})});
+          $("#quizFeedback").innerHTML = `<div class="quiz-result ${result.correct?"correct":"wrong"}"><b>${result.correct?"回答正确":"回答错误"}</b><p>正确释义：${esc(result.correct_answer)}</p><small>连续答对：${result.streak} 次 · 下次复习：${esc(result.next_review_date)}（${result.interval_days} 天后）</small></div>`;
+          $("#nextQuiz").hidden=false;
+          $("#nextQuiz").addEventListener("click",nextMasteryQuestion,{once:true});
+          await refreshMasteryStats();
+        } catch(e) { $("#quizFeedback").textContent="提交失败："+e.message; }
+      }));
+    } catch(e) {
+      target.innerHTML=`<p class="mastery-empty">检测暂不可用：${esc(e.message)}</p>`;
+    }
+  }
+
   q.addEventListener("input", () => {
 
     clearTimeout(state.timer);
@@ -2168,7 +2282,7 @@ function speakWord(word) {
 
         $("#welcome").hidden = false;
 
-      } else if (b.dataset.page === "image-import") {
+      } else if (b.dataset.page === "mastery") {\n\n        showMastery();\n\n      } else if (b.dataset.page === "image-import") {
 
         showImageImport();
 
