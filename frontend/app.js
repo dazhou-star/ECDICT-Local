@@ -2147,10 +2147,10 @@ function speakWord(word) {
       }
       target.innerHTML = `
         <article class="quiz-card">
-          <div class="quiz-meta">读模式 · 选择最符合的中文含义 · ${esc(qdata.pos || "")}</div>
+          <div class="quiz-meta">读模式 · 困难模式 · 选择最符合的中文含义 · ${esc(qdata.pos || "")}</div>
           <h3>${esc(qdata.word)}</h3>
           <p>这个单词在当前义项中表示：</p>
-          <div class="quiz-options">${qdata.options.map((option,i)=>`<button data-answer-index="${i}"><span>${String.fromCharCode(65+i)}</span>${esc(option)}</button>`).join("")}</div>
+          <div class="quiz-options">${qdata.options.map((option,i)=>`<button data-answer-index="${i}"><span>${String.fromCharCode(65+i)}</span><div class="quiz-option-text">${esc(option)}</div></button>`).join("")}</div>
           <div id="quizFeedback"></div>
           <button class="mastery-secondary quiz-next" id="nextQuiz" hidden>下一题</button>
         </article>`;
