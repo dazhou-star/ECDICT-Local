@@ -1,10 +1,17 @@
 import re
 import math
 import random
+from difflib import SequenceMatcher
 from .db import connect
 
 def _escape_like(value: str) -> str:
-    return value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return value.replace("!", "!!").repdef _frequency_rank(row):
+    try:
+        value = int(row["frq"] or 0)
+        return value if value > 0 else 2147483647
+    except (KeyError, TypeError, ValueError):
+        return 2147483647
+
 
 def search_words(q: str, limit: int = 15, offset: int = 0, mode: str = "prefix"):
     q = q.strip()
@@ -15,16 +22,86 @@ def search_words(q: str, limit: int = 15, offset: int = 0, mode: str = "prefix")
     conn = connect()
     try:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(words)")}
-        preview_fields = [name for name in ("word", "translation", "definition", "phonetic", "pos") if name in columns]
-        selected = ", ".join('"' + name + '"' for name in preview_fields)
+        fields = ["word", "translation", "definition", "phonetic", "pos"]
+        selected = [f'"{name}"' for name in fields if name in columns]
+        selected.append('"frq"' if "frq" in columns else "NULL AS frq")
+        selected_sql = ", ".join(selected)
         if mode == "contains" and len(q) >= 3:
-            # Contains search is deliberately bounded and should be used only on demand.
             pattern = "%" + _escape_like(q) + "%"
         else:
             pattern = _escape_like(q) + "%"
-        sql = f"SELECT {selected} FROM words WHERE word LIKE ? ESCAPE '!' ORDER BY word COLLATE NOCASE LIMIT ? OFFSET ?"
-        rows = conn.execute(sql, (pattern, limit, offset)).fetchall()
-        return [dict(row) for row in rows]
+        rows = conn.execute(
+            f"SELECT {selected_sql} FROM words WHERE word LIKE ? ESCAPE '!' LIMIT ?",
+            (pattern, max(limit * 12, 120)),
+        ).fetchall()
+        candidates = {}
+        for row in rows:
+            item = dict(row)
+            candidates[item["word"].casefold()] = item
+
+        if mode == "prefix" and len(q) >= 4:
+            low = max(1, len(q) - (2 if len(q) >= 7 else 1))
+            high = len(q) + (2 if len(q) >= 7 else 1)
+            freq_order = (
+                "CASE WHEN CAST(frq AS INTEGER)>0 THEN CAST(frq AS INTEGER) ELSE 2147483647 END"
+                if "frq" in columns else "word COLLATE NOCASE"
+            )
+            if q[0:1].isalpha():
+                rows = conn.execute(
+                    f"SELECT {selected_sql} FROM words WHERE word LIKE ? ESCAPE '!' "
+                    f"AND length(word) BETWEEN ? AND ? ORDER BY {freq_order} LIMIT 700",
+                    (q[0] + "%", low, high),
+                ).fetchall()
+                for row in rows:
+                    item = dict(row)
+                    candidates.setdefault(item["word"].casefold(), item)
+
+            gram_size = 3 if len(q) >= 6 else 2
+            grams = list(dict.fromkeys(q[i:i + gram_size] for i in range(len(q) - gram_size + 1)))[:6]
+            if grams:
+                clauses = " OR ".join("word LIKE ? ESCAPE '!'" for _ in grams)
+                hit_expr = " + ".join("CASE WHEN word LIKE ? ESCAPE '!' THEN 1 ELSE 0 END" for _ in grams)
+                rows = conn.execute(
+                    f"SELECT {selected_sql}, ({hit_expr}) AS gram_hits FROM words "
+                    f"WHERE {clauses} ORDER BY gram_hits DESC, {freq_order} LIMIT 250",
+                    ["%" + _escape_like(g) + "%" for g in grams] * 2,
+                ).fetchall()
+                for row in rows:
+                    item = dict(row)
+                    candidates.setdefault(item["word"].casefold(), item)
+
+        ranked = []
+        query_folded = q.casefold()
+        threshold = 0.72 if len(q) <= 4 else 0.64 if len(q) <= 6 else 0.60
+        for item in candidates.values():
+            word = str(item.get("word") or "")
+            folded = word.casefold()
+            if folded == query_folded:
+                match_type, similarity = "exact", 1.0
+            elif folded.startswith(query_folded):
+                match_type, similarity = "prefix", 1.0
+            elif mode == "contains" and query_folded in folded:
+                match_type, similarity = "contains", 1.0
+            else:
+                similarity = SequenceMatcher(None, query_folded, folded, autojunk=False).ratio()
+                if similarity < threshold:
+                    continue
+                match_type = "fuzzy"
+            item["match_type"] = match_type
+            item["similarity"] = round(similarity, 4)
+            ranked.append(item)
+
+        ranked.sort(key=lambda item: (
+            0 if item["match_type"] == "exact" else 1,
+            _frequency_rank(item),
+            0 if item["match_type"] == "prefix" else 1,
+            -item["similarity"],
+            str(item["word"]).casefold(),
+        ))
+        return ranked[offset:offset + limit]
+    finally:
+        conn.close()
+]
     finally:
         conn.close()
 
