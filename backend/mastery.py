@@ -796,3 +796,80 @@ def overview():
         due = conn.execute("SELECT COUNT(*) FROM sense_mastery WHERE mode='read' AND next_review_date<=?", (today,)).fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM sense_test_history WHERE mode='read'").fetchone()[0]
     return {"favorites": favorites, "senses": senses, "drafts": drafts, "active": active, "due": due, "tests": total}
+
+
+def export_print_data(start_date=None, end_date=None):
+    """Build a read-only snapshot for continuous-roll printing; never alters study state."""
+    clauses = []
+    params = []
+    if start_date:
+        clauses.append("f.study_date>=?")
+        params.append(start_date)
+    if end_date:
+        clauses.append("f.study_date<=?")
+        params.append(end_date)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    with get_db() as conn:
+        favorite_rows = conn.execute(
+            f"""SELECT f.word, f.study_date, f.added_at, w.*
+                FROM favorites f LEFT JOIN words w ON w.word=f.word COLLATE NOCASE
+                {where}
+                ORDER BY f.study_date ASC, f.added_at ASC, f.id ASC""",
+            params,
+        ).fetchall()
+        words = []
+        for row in favorite_rows:
+            item = dict(row)
+            item["word"] = item.get("word") or ""
+            words.append(item)
+
+        senses = conn.execute(
+            f"""SELECT s.id, s.word, s.pos, s.sense_text, s.review_state,
+                       GROUP_CONCAT(fg.fragment, '；') AS fragments
+                FROM word_senses s
+                JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
+                LEFT JOIN sense_fragments fg ON fg.sense_id=s.id AND fg.enabled=1
+                {where.replace("f.study_date", "fav.study_date") if where else ""}
+                WHERE s.mode='read' AND s.review_state='active'
+                GROUP BY s.id
+                ORDER BY fav.study_date ASC, s.word COLLATE NOCASE, s.source_order""",
+            params,
+        ).fetchall()
+
+        exercises = []
+        skipped = 0
+        for sense in senses:
+            fragments = conn.execute(
+                "SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",
+                (sense["id"],),
+            ).fetchall()
+            if not fragments:
+                skipped += 1
+                continue
+            correct = random.choice(fragments)["fragment"]
+            distractors = _dictionary_distractors(
+                conn, correct, sense["pos"], sense["word"], 3
+            )
+            if len(distractors) < 3:
+                skipped += 1
+                continue
+            options = distractors + [correct]
+            random.shuffle(options)
+            exercises.append({
+                "word": sense["word"],
+                "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
+                "options": options,
+                "answer": options.index(correct),
+                "meaning": correct,
+            })
+
+    return {
+        "words": words,
+        "exercises": exercises,
+        "counts": {
+            "words": len(words),
+            "active_senses": len(senses),
+            "exercises": len(exercises),
+            "skipped_exercises": skipped,
+        },
+    }
