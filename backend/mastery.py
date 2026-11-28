@@ -401,8 +401,8 @@ def _pos_family(pos):
 
 def _meaning_similarity(left, right):
     """A lightweight character-set similarity check, not a semantic model."""
-    a = set(re.findall(r"[\\u3400-\\u9fff]", left or ""))
-    b = set(re.findall(r"[\\u3400-\\u9fff]", right or ""))
+    a = set(re.findall(r"[\u3400-\u9fff]", left or ""))
+    b = set(re.findall(r"[\u3400-\u9fff]", right or ""))
     if not a or not b:
         return 0.0
     return len(a & b) / max(1, len(a | b))
