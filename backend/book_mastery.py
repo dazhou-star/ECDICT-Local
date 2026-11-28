@@ -56,13 +56,13 @@ def get_overview(mode):
     today=date.today().isoformat()
     with get_db() as conn:
         books=conn.execute("SELECT COUNT(*) FROM vocabulary_books WHERE mode=?",(mode,)).fetchone()[0]
-        senses=conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode=?",(mode,)).fetchone()[0]
-        active=conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode=? AND review_state='active'",(mode,)).fetchone()[0]
-        draft=conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode=? AND review_state='draft'",(mode,)).fetchone()[0]
-        ignored=conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode=? AND review_state='ignored'",(mode,)).fetchone()[0]
-        due=conn.execute("""SELECT COUNT(*) FROM sense_mastery m JOIN word_senses s ON s.id=m.sense_id WHERE m.mode=? AND s.review_state='active' AND m.next_review_date<=?""",(mode,today)).fetchone()[0]
+        senses=conn.execute("SELECT COUNT(*) FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode WHERE s.mode=?",(mode,)).fetchone()[0]
+        active=conn.execute("SELECT COUNT(*) FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode WHERE s.mode=? AND s.review_state='active'",(mode,)).fetchone()[0]
+        draft=conn.execute("SELECT COUNT(*) FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode WHERE s.mode=? AND s.review_state='draft'",(mode,)).fetchone()[0]
+        ignored=conn.execute("SELECT COUNT(*) FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode WHERE s.mode=? AND s.review_state='ignored'",(mode,)).fetchone()[0]
+        due=conn.execute("""SELECT COUNT(*) FROM sense_mastery m JOIN word_senses s ON s.id=m.sense_id JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode WHERE m.mode=? AND s.review_state='active' AND m.next_review_date<=?""",(mode,today)).fetchone()[0]
         history=conn.execute("SELECT COUNT(*) FROM sense_test_history WHERE mode=?",(mode,)).fetchone()[0]
-        upcoming=conn.execute("""SELECT MIN(m.next_review_date) FROM sense_mastery m JOIN word_senses s ON s.id=m.sense_id WHERE m.mode=? AND s.review_state='active' AND m.next_review_date>?""",(mode,today)).fetchone()[0]
+        upcoming=conn.execute("""SELECT MIN(m.next_review_date) FROM sense_mastery m JOIN word_senses s ON s.id=m.sense_id JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode WHERE m.mode=? AND s.review_state='active' AND m.next_review_date>?""",(mode,today)).fetchone()[0]
     return {"mode":mode,"words":books,"senses":senses,"active":active,"draft":draft,"ignored":ignored,
             "due":due,"tests":history,"next_review_date":upcoming}
 
@@ -74,7 +74,7 @@ def list_book_senses(mode,state="all",limit=1000):
                       m.next_review_date,m.last_test_date,m.streak,m.interval_days,m.status,
                       m.total_correct,m.total_wrong,
                       GROUP_CONCAT(f.fragment,'；') AS fragments
-               FROM word_senses s
+               FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode
                LEFT JOIN sense_mastery m ON m.sense_id=s.id AND m.mode=s.mode
                LEFT JOIN sense_fragments f ON f.sense_id=s.id AND f.enabled=1
                WHERE s.mode=? AND (?='all' OR s.review_state=?)
