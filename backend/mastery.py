@@ -146,6 +146,7 @@ def split_translation(translation):
 def prepare_favorites():
     created_words = 0
     created_senses = 0
+    activated_senses = 0
     with get_db() as conn:
         favorites = conn.execute(
             "SELECT f.word, f.study_date, w.translation FROM favorites f "
@@ -153,12 +154,33 @@ def prepare_favorites():
         ).fetchall()
         for favorite in favorites:
             word = favorite["word"]
+            first_due = (
+                date.fromisoformat(favorite["study_date"] or date.today().isoformat())
+                + timedelta(days=1)
+            ).isoformat()
             existing = conn.execute(
-                "SELECT COUNT(*) FROM word_senses WHERE word = ? COLLATE NOCASE AND mode='read'",
+                "SELECT id, review_state FROM word_senses "
+                "WHERE word = ? COLLATE NOCASE AND mode='read'",
                 (word,),
-            ).fetchone()[0]
+            ).fetchall()
             if existing:
+                # Existing draft senses are activated automatically; no manual proofreading step.
+                for sense in existing:
+                    if sense["review_state"] == "draft":
+                        conn.execute(
+                            "UPDATE word_senses SET review_state='active' WHERE id=?",
+                            (sense["id"],),
+                        )
+                        activated_senses += 1
+                    if sense["review_state"] != "ignored":
+                        conn.execute(
+                            """INSERT OR IGNORE INTO sense_mastery
+                               (sense_id, mode, next_review_date, interval_days)
+                               VALUES (?, 'read', ?, 1)""",
+                            (sense["id"], first_due),
+                        )
                 continue
+
             groups = split_translation(favorite["translation"] or "")
             if not groups:
                 continue
@@ -168,7 +190,7 @@ def prepare_favorites():
                 cursor = conn.execute(
                     """INSERT INTO word_senses
                        (word, mode, pos, sense_text, source_translation, source_order, review_state, created_at)
-                       VALUES (?, 'read', ?, ?, ?, ?, 'draft', ?)""",
+                       VALUES (?, 'read', ?, ?, ?, ?, 'active', ?)""",
                     (word, pos, sense_text, favorite["translation"] or "", order, now_iso()),
                 )
                 sense_id = cursor.lastrowid
@@ -177,9 +199,20 @@ def prepare_favorites():
                         "INSERT INTO sense_fragments(sense_id, fragment, source_order) VALUES (?, ?, ?)",
                         (sense_id, fragment, fragment_order),
                     )
+                conn.execute(
+                    """INSERT OR IGNORE INTO sense_mastery
+                       (sense_id, mode, next_review_date, interval_days)
+                       VALUES (?, 'read', ?, 1)""",
+                    (sense_id, first_due),
+                )
                 created_senses += 1
+                activated_senses += 1
         conn.commit()
-    return {"created_words": created_words, "created_senses": created_senses}
+    return {
+        "created_words": created_words,
+        "created_senses": created_senses,
+        "activated_senses": activated_senses,
+    }
 
 
 def list_senses(state="draft", limit=500):
