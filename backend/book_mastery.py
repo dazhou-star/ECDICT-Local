@@ -116,7 +116,8 @@ def next_write_question(include_future=False):
                FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode
                JOIN sense_mastery m ON m.sense_id=s.id AND m.mode=s.mode
                WHERE s.mode='write' AND s.review_state='active' AND (?=1 OR m.next_review_date<=?)
-               ORDER BY CASE WHEN m.next_review_date<=? THEN 0 ELSE 1 END,m.next_review_date,m.streak,RANDOM() LIMIT 1""",(int(bool(include_future)),today,today)
+                 AND (?=0 OR COALESCE(m.last_test_date,'')<>?)
+               ORDER BY CASE WHEN m.next_review_date<=? THEN 0 ELSE 1 END,m.next_review_date,m.streak,RANDOM() LIMIT 1""",(int(bool(include_future)),today,int(bool(include_future)),today,today)
         ).fetchone()
         if not due:
             upcoming=conn.execute(
