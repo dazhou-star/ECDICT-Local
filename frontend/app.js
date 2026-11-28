@@ -2325,7 +2325,11 @@ function speakWord(word) {
 
         showBook("write");
 
-      } else if (b.dataset.page === "mastery") {\n        showMastery("read");\n      } else if (b.dataset.page === "print") {\n        showPrintChooser();\n      } else if (b.dataset.page === "image-import") {
+      } else if (b.dataset.page === "mastery") {
+        showMastery("read");
+      } else if (b.dataset.page === "print") {
+        showPrintChooser();
+      } else if (b.dataset.page === "image-import") {
 
         showImageImport();
 
