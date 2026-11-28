@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend import db
-from backend.book_mastery import initialize_books_mastery, get_overview, list_book_senses, next_write_question, answer_write_question
+from backend.book_mastery import initialize_books_mastery, get_overview, list_book_senses, next_write_question, answer_write_question, guess_write_question
 
 
 class IndependentBookMasteryTests(unittest.TestCase):
@@ -73,6 +73,33 @@ class IndependentBookMasteryTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(tuple(mastery), (7, 4, "2030-01-01"))
         self.assertEqual(history, 1)
+
+    def test_dictionary_supported_synonym_is_not_marked_wrong_and_unlocks_hints(self):
+        with db.get_db() as conn:
+            conn.execute("INSERT INTO words(word,translation) VALUES ('dispute','n. 争论；辩论')")
+            sense = conn.execute(
+                "SELECT id FROM word_senses WHERE word='light' AND mode='write' ORDER BY id LIMIT 1"
+            ).fetchone()
+            fragment = conn.execute(
+                "SELECT id FROM sense_fragments WHERE sense_id=? ORDER BY id LIMIT 1",
+                (sense["id"],),
+            ).fetchone()
+            conn.execute(
+                """INSERT INTO mastery_questions
+                   (question_id,sense_id,fragment_id,mode,prompt,correct_answer,options_json,created_at)
+                   VALUES ('synonym-test',?,?, 'write','争论','argument','[]','2026-11-28T00:00:00+00:00')""",
+                (sense["id"], fragment["id"]),
+            )
+            conn.execute("INSERT INTO write_question_progress(question_id,attempts) VALUES('synonym-test',0)")
+            conn.commit()
+
+        first = guess_write_question("synonym-test", "dispute")
+        second = guess_write_question("synonym-test", "dispute")
+        self.assertTrue(first["accepted_synonym"])
+        self.assertFalse(first["finished"])
+        self.assertIn("首字母", first["hint"])
+        self.assertIn("字母", second["hint"])
+        self.assertEqual(get_overview("write")["tests"], 0)
 
     def test_write_question_uses_chinese_prompt_and_spelling_answer(self):
         question = next_write_question()
