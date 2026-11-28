@@ -38,6 +38,24 @@ class VocabularyBookMigrationTests(unittest.TestCase):
         self.assertEqual(rows[0]["mode"], "read")
         self.assertEqual(rows[0]["study_date"], "2026-11-19")
 
+    def test_removed_read_word_is_not_restored_by_next_startup(self):
+        with db.get_db() as conn:
+            conn.execute(
+                "INSERT INTO favorites(word, added_at, study_date) VALUES (?, ?, ?)",
+                ("obsolete", "2026-11-20T10:00:00+00:00", "2026-11-19"),
+            )
+            conn.commit()
+        db.init_vocabulary_books()
+        with db.get_db() as conn:
+            conn.execute("DELETE FROM vocabulary_books WHERE word='obsolete' AND mode='read'")
+            conn.commit()
+        db.init_vocabulary_books()
+        with db.get_db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM vocabulary_books WHERE word='obsolete' AND mode='read'"
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
     def test_same_word_can_belong_to_both_books_independently(self):
         db.init_vocabulary_books()
         with db.get_db() as conn:
