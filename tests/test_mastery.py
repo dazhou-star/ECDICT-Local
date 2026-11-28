@@ -57,6 +57,7 @@ class DistractorQualityTests(unittest.TestCase):
         self.assertEqual(_clean_fragment("西)艾森曼"), "西艾森曼")
         self.assertEqual(_clean_fragment("（木材）"), "（木材）")
         self.assertEqual(_clean_fragment("木材）"), "木材")
+        self.assertEqual(_clean_fragment("“木材"), "木材")
 
     def test_distractor_parser_preserves_domain_and_language_markers(self):
         parsed = _split_translation_for_distractors(
