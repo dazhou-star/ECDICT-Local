@@ -19,7 +19,7 @@ from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table
-from .mastery import init_mastery_tables, prepare_favorites, list_senses, set_sense_state, add_fragment, update_fragment_by_order, update_fragment, split_fragment_to_sense, create_question, submit_answer, overview
+from .mastery import init_mastery_tables, prepare_favorites, list_senses, set_sense_state, add_fragment, update_fragment_by_order, update_fragment, split_fragment_to_sense, create_question, submit_answer, overview, export_print_data
 
 class FavoriteRequest(BaseModel):
     word: str
@@ -807,6 +807,15 @@ def mastery_split_fragment(sense_id: int, source_order: int):
     if result is None:
         raise HTTPException(status_code=404, detail="找不到待校对义项或解释片段")
     return result
+
+@app.get("/api/print/data")
+def print_data(
+    start_date: Optional[str] = Query(None, pattern=r"^\\d{4}-\\d{2}-\\d{2}$"),
+    end_date: Optional[str] = Query(None, pattern=r"^\\d{4}-\\d{2}-\\d{2}$"),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
+    return export_print_data(start_date, end_date)
 
 @app.get("/api/mastery/question")
 def mastery_question():
