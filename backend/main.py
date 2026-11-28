@@ -680,6 +680,8 @@ def add_vocabulary_book_word(mode: str, payload: VocabularyBookRequest):
             (word, mode, now, study_date),
         )
         conn.commit()
+    initialize_books_mastery()
+    with get_db() as conn:
         row = conn.execute(
             """SELECT word, added_at, study_date FROM vocabulary_books
                WHERE word=? COLLATE NOCASE AND mode=?""",
@@ -717,6 +719,7 @@ def bulk_add_vocabulary_book_words(mode: str, payload: VocabularyBookBulkRequest
             )
             created += max(cursor.rowcount, 0)
         conn.commit()
+    initialize_books_mastery()
     return {
         "ok": True, "mode": mode, "received": len(values), "valid": len(unique),
         "created": created, "skipped": len(unique) - created,
@@ -756,6 +759,8 @@ def add_favorite(payload: FavoriteRequest):
             (word, now, study_date),
         )
         conn.commit()
+    initialize_books_mastery()
+    with get_db() as conn:
         row = conn.execute(
             "SELECT word, added_at, study_date FROM vocabulary_books WHERE word = ? COLLATE NOCASE AND mode='read'",
             (word,),
@@ -788,6 +793,7 @@ def import_favorites(payload: FavoriteImportRequest):
             )
             imported += max(cursor.rowcount, 0)
         conn.commit()
+    initialize_books_mastery()
     return {"ok": True, "received": len(words), "imported": imported}
 
 
@@ -821,6 +827,7 @@ def bulk_add_favorites(payload: FavoriteBulkRequest):
             )
             created += max(cursor.rowcount, 0)
         conn.commit()
+    initialize_books_mastery()
 
     return {
         "ok": True, "received": len(dated_items), "valid": len(words),
