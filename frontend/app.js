@@ -206,6 +206,7 @@
   }
 
   async function showBook(mode) {
+    await loadBook(mode);
     const page = mode === "read" ? "read-book" : "write-book";
     state.page = page;
     setSide(page);
