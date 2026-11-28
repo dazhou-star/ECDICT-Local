@@ -2,7 +2,7 @@
   const root=document.getElementById("paper");
   const mode=new URLSearchParams(location.search).get("mode")==="write"?"write":"read";
   const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const compactText=v=>String(v??"").replace(/\r\n|\r|\n/g," | ");
+  const compactText=v=>String(v??"").replace(/\\r\\n|\\r|\\n|\r\n|\r|\n/g," | ");
   const dateLabel=v=>{const d=new Date(v+"T00:00:00");return Number.isNaN(d.getTime())?v:d.toLocaleDateString("zh-CN",{month:"2-digit",day:"2-digit"});};
   fetch("/api/print/"+mode+"/data").then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}).then(data=>{
     document.title=(mode==="read"?"读单词本":"写单词本")+" · 复习纸条";
