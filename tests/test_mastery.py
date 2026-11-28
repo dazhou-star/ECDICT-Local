@@ -1,10 +1,48 @@
 import unittest
+from datetime import date
 
 from backend.mastery import (
+    _next_week_range, _distribute_print_words,
     split_translation, _too_similar_meaning, _pos_family,
     _clean_fragment, _split_translation_for_distractors,
     _is_excluded_distractor_sense,
 )
+
+
+
+class WeeklyPaperScheduleTests(unittest.TestCase):
+    def test_next_paper_week_is_sunday_through_friday(self):
+        self.assertEqual(
+            _next_week_range(date(2026, 11, 28)),
+            (date(2026, 11, 29), date(2026, 12, 4)),
+        )
+
+    def test_sunday_generates_the_following_sunday_to_friday(self):
+        self.assertEqual(
+            _next_week_range(date(2026, 11, 29)),
+            (date(2026, 12, 6), date(2026, 12, 11)),
+        )
+
+    def test_overdue_words_are_balanced_across_six_days(self):
+        groups = [{
+            "word": f"word{i:03}",
+            "due_date": "2026-11-20",
+            "week_start": "2026-11-29",
+            "weight": 1,
+        } for i in range(60)]
+        buckets = _distribute_print_words(groups)
+        counts = [len(bucket) for bucket in buckets]
+        self.assertEqual(sum(counts), 60)
+        self.assertLessEqual(max(counts) - min(counts), 2)
+
+    def test_one_word_group_is_not_split_between_days(self):
+        groups = [{
+            "word": "example", "due_date": "2026-11-30",
+            "week_start": "2026-11-29", "weight": 4,
+        }]
+        buckets = _distribute_print_words(groups)
+        self.assertEqual(sum(len(bucket) for bucket in buckets), 1)
+        self.assertEqual(sum(1 for bucket in buckets if bucket), 1)
 
 
 class TranslationSplitTests(unittest.TestCase):
