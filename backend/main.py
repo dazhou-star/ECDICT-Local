@@ -18,8 +18,23 @@ from .paddle_ocr import get_paddle_status
 from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
-from .db import get_db, init_favorites_table
+from .db import get_db, init_favorites_table, init_vocabulary_books
 from .mastery import init_mastery_tables, prepare_favorites, list_senses, set_sense_state, add_fragment, update_fragment_by_order, update_fragment, split_fragment_to_sense, create_question, submit_answer, overview, export_print_data
+
+class VocabularyBookRequest(BaseModel):
+    word: str
+    study_date: Optional[str] = None
+
+
+class VocabularyBookBulkItem(BaseModel):
+    word: str
+    study_date: Optional[str] = None
+
+
+class VocabularyBookBulkRequest(BaseModel):
+    words: List[str] = []
+    items: List[VocabularyBookBulkItem] = []
+
 
 class FavoriteRequest(BaseModel):
     word: str
@@ -351,6 +366,7 @@ app = FastAPI(
 @app.on_event("startup")
 def startup_initialize_database():
     init_favorites_table()
+    init_vocabulary_books()
     init_mastery_tables()
 
 @app.get("/api/health")
@@ -626,6 +642,93 @@ def correct_image_import(payload: ImageCorrectionRequest):
             raise HTTPException(status_code=503, detail="词库缺少 word 或 translation 字段，无法进行双语校对")
         results = [_correct_image_item(conn, item, columns) for item in payload.items]
     return {"ok": True, "count": len(results), "results": results}
+
+
+def validate_book_mode(mode: str) -> str:
+    if mode not in ("read", "write"):
+        raise HTTPException(status_code=404, detail="单词本类型必须是 read 或 write")
+    return mode
+
+
+@app.get("/api/books/{mode}")
+def list_vocabulary_book(mode: str):
+    mode = validate_book_mode(mode)
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT word, added_at, study_date FROM vocabulary_books
+               WHERE mode=? ORDER BY study_date DESC, added_at DESC, id DESC""",
+            (mode,),
+        ).fetchall()
+    return {"mode": mode, "items": [dict(row) for row in rows]}
+
+
+@app.post("/api/books/{mode}")
+def add_vocabulary_book_word(mode: str, payload: VocabularyBookRequest):
+    mode = validate_book_mode(mode)
+    word = clean_word(payload.word)
+    now = utc_now_iso()
+    study_date = validate_study_date(payload.study_date)
+    with get_db() as conn:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO vocabulary_books(word, mode, added_at, study_date)
+               VALUES (?, ?, ?, ?)""",
+            (word, mode, now, study_date),
+        )
+        conn.commit()
+        row = conn.execute(
+            """SELECT word, added_at, study_date FROM vocabulary_books
+               WHERE word=? COLLATE NOCASE AND mode=?""",
+            (word, mode),
+        ).fetchone()
+    return {"ok": True, "created": cursor.rowcount == 1, "mode": mode, **dict(row)}
+
+
+@app.post("/api/books/{mode}/bulk")
+def bulk_add_vocabulary_book_words(mode: str, payload: VocabularyBookBulkRequest):
+    mode = validate_book_mode(mode)
+    if len(payload.words) + len(payload.items) > 500:
+        raise HTTPException(status_code=413, detail="单次最多导入 500 个单词")
+    now = utc_now_iso()
+    today = date.today().isoformat()
+    values = [(word, None) for word in payload.words]
+    values.extend((item.word, item.study_date) for item in payload.items)
+    unique = []
+    seen = set()
+    for value, supplied_date in values:
+        if not isinstance(value, str):
+            continue
+        word = value.strip()
+        key = word.casefold()
+        if word and len(word) <= 100 and key not in seen:
+            seen.add(key)
+            unique.append((word, validate_study_date(supplied_date or today)))
+    created = 0
+    with get_db() as conn:
+        for word, study_date in unique:
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO vocabulary_books(word, mode, added_at, study_date)
+                   VALUES (?, ?, ?, ?)""",
+                (word, mode, now, study_date),
+            )
+            created += max(cursor.rowcount, 0)
+        conn.commit()
+    return {
+        "ok": True, "mode": mode, "received": len(values), "valid": len(unique),
+        "created": created, "skipped": len(unique) - created,
+    }
+
+
+@app.delete("/api/books/{mode}/{word}")
+def remove_vocabulary_book_word(mode: str, word: str):
+    mode = validate_book_mode(mode)
+    word = clean_word(word)
+    with get_db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM vocabulary_books WHERE word=? COLLATE NOCASE AND mode=?",
+            (word, mode),
+        )
+        conn.commit()
+    return {"ok": True, "mode": mode, "deleted": cursor.rowcount > 0}
 
 
 @app.get("/api/favorites")
