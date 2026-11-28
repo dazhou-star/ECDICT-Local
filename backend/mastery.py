@@ -848,20 +848,21 @@ def export_print_data(start_date=None, end_date=None):
             if not fragments:
                 skipped += 1
                 continue
-            correct = random.choice(fragments)["fragment"]
-            distractors = _dictionary_distractors(conn, correct, sense["pos"], sense["word"], 3)
-            if len(distractors) < 3:
-                skipped += 1
-                continue
-            options = distractors + [correct]
-            random.shuffle(options)
-            exercises.append({
-                "word": sense["word"],
-                "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
-                "options": options,
-                "answer": options.index(correct),
-                "meaning": correct,
-            })
+            for fragment in fragments:
+                correct = fragment["fragment"]
+                distractors = _dictionary_distractors(conn, correct, sense["pos"], sense["word"], 3)
+                if len(distractors) < 3:
+                    skipped += 1
+                    continue
+                options = distractors + [correct]
+                random.shuffle(options)
+                exercises.append({
+                    "word": sense["word"],
+                    "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
+                    "options": options,
+                    "answer": options.index(correct),
+                    "meaning": correct,
+                })
 
     return {
         "words": words,
