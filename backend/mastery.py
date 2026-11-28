@@ -790,37 +790,50 @@ def overview():
     today = date.today().isoformat()
     with get_db() as conn:
         favorites = conn.execute("SELECT COUNT(*) FROM favorites").fetchone()[0]
-        sense_date_filter = ""
-        if start_date:
-            sense_date_filter += " AND fav.study_date>=?"
-        if end_date:
-            sense_date_filter += " AND fav.study_date<=?"
-        senses = conn.execute(
-            f"""SELECT s.id, s.word, s.pos, s.sense_text, s.review_state,
-                       GROUP_CONCAT(fg.fragment, '；') AS fragments
-                FROM word_senses s
-                JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
-                LEFT JOIN sense_fragments fg ON fg.sense_id=s.id AND fg.enabled=1
-                WHERE s.mode='read' AND s.review_state='active' {sense_date_filter}
-                GROUP BY s.id
-                ORDER BY fav.study_date ASC, s.word COLLATE NOCASE, s.source_order""",
+        senses = conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode='read'").fetchone()[0]
+        drafts = conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode='read' AND review_state='draft'").fetchone()[0]
+        active = conn.execute("SELECT COUNT(*) FROM word_senses WHERE mode='read' AND review_state='active'").fetchone()[0]
+        due = conn.execute("SELECT COUNT(*) FROM sense_mastery WHERE mode='read' AND next_review_date<=?", (today,)).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM sense_test_history WHERE mode='read'").fetchone()[0]
+    return {"favorites": favorites, "senses": senses, "drafts": drafts, "active": active, "due": due, "tests": total}
+
+
+def export_print_data(start_date=None, end_date=None):
+    """Build a read-only snapshot for continuous-roll printing."""
+    favorite_filters = []
+    params = []
+    if start_date:
+        favorite_filters.append("f.study_date>=?")
+        params.append(start_date)
+    if end_date:
+        favorite_filters.append("f.study_date<=?")
+        params.append(end_date)
+    favorite_where = "WHERE " + " AND ".join(favorite_filters) if favorite_filters else ""
+    sense_filters = []
+    if start_date:
+        sense_filters.append("fav.study_date>=?")
+    if end_date:
+        sense_filters.append("fav.study_date<=?")
+    sense_where = " AND ".join(sense_filters)
+    with get_db() as conn:
+        favorite_rows = conn.execute(
+            f"""SELECT f.word AS favorite_word, f.study_date, f.added_at, w.*
+                FROM favorites f LEFT JOIN words w ON w.word=f.word COLLATE NOCASE
+                {favorite_where}
+                ORDER BY f.study_date ASC, f.added_at ASC, f.id ASC""",
             params,
         ).fetchall()
         words = []
         for row in favorite_rows:
             item = dict(row)
-            item["word"] = item.get("word") or ""
+            item["word"] = item.pop("favorite_word", None) or item.get("word") or ""
             words.append(item)
 
         senses = conn.execute(
-            f"""SELECT s.id, s.word, s.pos, s.sense_text, s.review_state,
-                       GROUP_CONCAT(fg.fragment, '；') AS fragments
+            f"""SELECT s.id, s.word, s.pos, s.sense_text, s.review_state
                 FROM word_senses s
                 JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
-                LEFT JOIN sense_fragments fg ON fg.sense_id=s.id AND fg.enabled=1
-                {where.replace("f.study_date", "fav.study_date") if where else ""}
-                WHERE s.mode='read' AND s.review_state='active'
-                GROUP BY s.id
+                WHERE s.mode='read' AND s.review_state='active' {("AND " + sense_where) if sense_where else ""}
                 ORDER BY fav.study_date ASC, s.word COLLATE NOCASE, s.source_order""",
             params,
         ).fetchall()
@@ -836,9 +849,7 @@ def overview():
                 skipped += 1
                 continue
             correct = random.choice(fragments)["fragment"]
-            distractors = _dictionary_distractors(
-                conn, correct, sense["pos"], sense["word"], 3
-            )
+            distractors = _dictionary_distractors(conn, correct, sense["pos"], sense["word"], 3)
             if len(distractors) < 3:
                 skipped += 1
                 continue
