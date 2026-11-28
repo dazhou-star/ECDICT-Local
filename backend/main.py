@@ -812,6 +812,13 @@ def mastery_split_fragment(sense_id: int, source_order: int):
 def print_data():
     return export_print_data()
 
+@app.get("/print")
+def print_page():
+    path = FRONTEND_DIR / "print.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="纸带页面文件缺失")
+    return FileResponse(path)
+
 @app.get("/api/mastery/question")
 def mastery_question():
     return create_question()
