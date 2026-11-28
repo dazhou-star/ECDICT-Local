@@ -263,30 +263,83 @@
     $("#welcome").hidden=true; $("#empty").hidden=true;
     $("#results").innerHTML='<section class="mastery-panel">正在加载…</section>';
     try {
-      const [o,d]=await Promise.all([api(`/api/mastery/${mode}/overview`),api(`/api/mastery/${mode}/senses`)]);
-      $("#results").innerHTML=`<section class="mastery-panel">
-        <header class="mastery-heading"><div><div class="collection-kicker">MASTERY & REVIEW</div><h2>掌握度与复习计划</h2><p>读写单词本的掌握度、复习进度和历史相互独立。</p></div><a href="/print.html?mode=${mode}" target="_blank">纸条打印 ↗</a></header>
-        <div class="mastery-switch"><button data-mm="read" class="${mode==="read"?"active":""}">📖 读单词本</button><button data-mm="write" class="${mode==="write"?"active":""}">✎ 写单词本</button></div>
-        <div class="mastery-stats"><div><b>${o.words}</b><span>单词</span></div><div><b>${o.active}</b><span>有效义项</span></div><div><b>${o.due}</b><span>待复习义项</span></div><div><b>${o.tests}</b><span>检测记录</span></div></div>
-        <p>${mode==="read"?"保留原有掌握度和复习计划；读单词本不提供检测练习。":"根据中文释义主动拼写英文，答题后独立更新写单词本的复习间隔。"}</p>
-        ${mode==="write"?'<button id="writeStart" class="primary-action">开始拼写复习</button>':""}<div id="writeQuestionHost"></div>
-        <h3>义项复习状态</h3><div class="mastery-sense-list">${d.items.map(x=>`<article class="mastery-sense"><div><b>${esc(x.word)}</b> <small>${esc(x.pos||"")}</small><p>${esc(x.fragments||x.sense_text||"")}</p></div><div class="mastery-sense-meta"><span>下次复习：${esc(x.next_review_date||"未安排")}</span><span>连续正确 ${x.streak||0} 次 · 正确 ${x.total_correct||0} / 错误 ${x.total_wrong||0}</span><select data-sid="${x.id}"><option value="active" ${x.review_state==="active"?"selected":""}>纳入复习</option><option value="draft" ${x.review_state==="draft"?"selected":""}>暂存</option><option value="ignored" ${x.review_state==="ignored"?"selected":""}>忽略</option></select></div></article>`).join("")||"<p>暂无义项</p>"}</div></section>`;
+      const pair=await Promise.all([api("/api/mastery/"+mode+"/overview"),api("/api/mastery/"+mode+"/senses")]);
+      const o=pair[0],d=pair[1];
+      $("#results").innerHTML='<section class="mastery-panel">'+
+        '<header class="mastery-heading"><div><div class="collection-kicker">MASTERY & REVIEW</div><h2>掌握度与复习计划</h2><p>这里只管理义项状态和独立复习计划；检测已移至独立页面。</p></div><a href="/print.html?mode='+mode+'" target="_blank">纸条打印 ↗</a></header>'+
+        '<div class="mastery-switch"><button data-mm="read" class="'+(mode==="read"?"active":"")+'">📖 读单词本</button><button data-mm="write" class="'+(mode==="write"?"active":"")+'">✎ 写单词本</button></div>'+
+        '<div class="mastery-stats"><div><b>'+o.words+'</b><span>单词</span></div><div><b>'+o.active+'</b><span>有效义项</span></div><div><b>'+o.due+'</b><span>待复习义项</span></div><div><b>'+o.tests+'</b><span>检测记录</span></div></div>'+
+        '<h3>义项复习状态</h3><div class="mastery-sense-list">'+(d.items.map(x=>'<article class="mastery-sense"><div><b>'+esc(x.word)+'</b> <small>'+esc(x.pos||"")+'</small><p>'+esc(x.fragments||x.sense_text||"")+'</p></div><div class="mastery-sense-meta"><span>下次复习：'+esc(x.next_review_date||"未安排")+'</span><span>连续正确 '+(x.streak||0)+' 次 · 正确 '+(x.total_correct||0)+' / 错误 '+(x.total_wrong||0)+'</span><select data-sid="'+x.id+'"><option value="active" '+(x.review_state==="active"?"selected":"")+'>纳入复习</option><option value="draft" '+(x.review_state==="draft"?"selected":"")+'>暂存</option><option value="ignored" '+(x.review_state==="ignored"?"selected":"")+'>忽略</option></select></div></article>').join("")||"<p>暂无义项</p>")+'</div></section>';
       document.querySelectorAll("[data-mm]").forEach(b=>b.onclick=()=>showMastery(b.dataset.mm));
-      document.querySelectorAll("[data-sid]").forEach(el=>el.onchange=async()=>{try{await api(`/api/mastery/${mode}/senses/${el.dataset.sid}/state`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:el.value})});showMastery(mode);}catch(e){status(e.message);}});
-      const start=document.getElementById("writeStart"); if(start)start.onclick=loadWriteQuestion;
-    } catch(e) {$("#results").innerHTML=`<section class="mastery-panel">加载失败：${esc(e.message)}</section>`;}
+      document.querySelectorAll("[data-sid]").forEach(el=>el.onchange=async()=>{try{await api("/api/mastery/"+mode+"/senses/"+el.dataset.sid+"/state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:el.value})});showMastery(mode);}catch(e){status(e.message);}});
+    } catch(e) {$("#results").innerHTML='<section class="mastery-panel">加载失败：'+esc(e.message)+'</section>';}
   }
+
+  async function showReadTest() {
+    state.page="read-test"; setSide("read-test"); hideSuggestions();
+    $("#welcome").hidden=true; $("#empty").hidden=true;
+    $("#results").innerHTML='<section class="test-workspace"><header class="test-heading"><div class="collection-kicker">READING · MULTIPLE CHOICE</div><h2>读词检测</h2><p>看到英文单词，选择最符合当前义项的中文解释。每个义项独立记录掌握度。</p></header><div id="readTestStats" class="test-stats">正在读取复习状态…</div><button id="readTestStart" class="primary-action">开始检测</button><div id="readTestHost"></div></section>';
+    try {const o=await api("/api/mastery/read/overview");$("#readTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';} catch(e) {$("#readTestStats").textContent="状态读取失败："+e.message;}
+    $("#readTestStart").onclick=nextReadQuestion;
+  }
+
+  async function nextReadQuestion() {
+    const host=$("#readTestHost"); if(!host)return;
+    host.innerHTML='<p class="test-wait">正在抽取到期义项…</p>';
+    try {
+      const q=await api("/api/mastery/read/question");
+      if(q.done){host.innerHTML='<div class="test-complete"><h3>'+esc(q.message||"当前没有待检测义项")+'</h3><p>'+(q.next_review_date?"下次复习："+esc(q.next_review_date):"请先在掌握度页面启用义项。")+'</p></div>';return;}
+      host.innerHTML='<article class="quiz-card"><div class="quiz-meta">读单词本 · 选择最符合的中文含义 · '+esc(q.pos||"")+'</div><h3>'+esc(q.word)+'</h3><p>这个单词在当前义项中表示：</p><div class="quiz-options">'+q.options.map((option,i)=>'<button data-read-answer="'+i+'"><span>'+String.fromCharCode(65+i)+'</span><div class="quiz-option-text">'+esc(option)+'</div></button>').join("")+'</div><div id="readQuizFeedback"></div><button class="quiz-next" id="readQuizNext" hidden>下一题</button></article>';
+      host.querySelectorAll("[data-read-answer]").forEach(button=>button.onclick=async()=>{
+        if(button.disabled)return;
+        host.querySelectorAll("[data-read-answer]").forEach(x=>x.disabled=true);
+        const answer=q.options[Number(button.dataset.readAnswer)];
+        try{
+          const r=await api("/api/mastery/read/answer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question_id:q.question_id,answer:answer})});
+          $("#readQuizFeedback").innerHTML='<div class="quiz-result '+(r.correct?"correct":"wrong")+'"><b>'+(r.correct?"回答正确":"回答错误")+'</b><p>正确释义：'+esc(r.correct_answer)+'</p><small>连续答对：'+r.streak+' 次 · 下次复习：'+esc(r.next_review_date)+'（'+r.interval_days+' 天后）</small></div>';
+          $("#readQuizNext").hidden=false;$("#readQuizNext").onclick=nextReadQuestion;
+          const o=await api("/api/mastery/read/overview");$("#readTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';
+        }catch(e){$("#readQuizFeedback").textContent="提交失败："+e.message;}
+      });
+    }catch(e){host.innerHTML='<p class="test-wait">检测暂不可用：'+esc(e.message)+'</p>';}
+  }
+
+  async function showWriteTest() {
+    state.page="write-test"; setSide("write-test"); hideSuggestions();
+    $("#welcome").hidden=true; $("#empty").hidden=true;
+    $("#results").innerHTML='<section class="test-workspace write-test-workspace"><header class="test-heading"><div class="collection-kicker">WRITING · ACTIVE RECALL</div><h2>写词检测</h2><p>根据明确的中文释义写出目标英文单词。同义词不会直接判错，系统会逐步给出线索。</p></header><div id="writeTestStats" class="test-stats">正在读取复习状态…</div><button id="writeTestStart" class="primary-action">开始拼写检测</button><div id="writeTestHost"></div></section>';
+    try {const o=await api("/api/mastery/write/overview");$("#writeTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';} catch(e) {$("#writeTestStats").textContent="状态读取失败："+e.message;}
+    $("#writeTestStart").onclick=loadWriteQuestion;
+  }
+
   async function loadWriteQuestion(){
-    const host=document.getElementById("writeQuestionHost"); if(!host)return;
-    host.textContent="正在准备题目…";
+    const host=$("#writeTestHost");if(!host)return;
+    host.innerHTML='<p class="test-wait">正在准备拼写题…</p>';
     try{
       const q=await api("/api/mastery/write/question",{method:"POST"});
-      if(q.done){host.innerHTML=`<p>${esc(q.message||("下一次复习："+(q.next_review_date||"暂无待复习义项")))}</p>`;return;}
-      host.innerHTML=`<div class="write-question"><div class="write-prompt">${esc(q.prompt)}</div><small>${esc(q.pos||"")}</small><form id="writeAnswerForm"><input id="writeAnswer" required autocomplete="off" placeholder="写出英文单词"><button class="primary-action">提交</button></form><div id="writeFeedback"></div></div>`;
-      document.getElementById("writeAnswer").focus();
-      document.getElementById("writeAnswerForm").onsubmit=async e=>{e.preventDefault();const btn=e.currentTarget.querySelector("button");btn.disabled=true;try{const a=await api("/api/mastery/write/answer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question_id:q.question_id,answer:document.getElementById("writeAnswer").value})});document.getElementById("writeFeedback").innerHTML=`<p class="${a.correct?"answer-correct":"answer-wrong"}">${a.correct?"回答正确":"回答错误，正确答案："+esc(a.correct_answer)} · 下次复习：${esc(a.next_review_date)}</p><button id="writeNext" type="button">下一题</button>`;document.getElementById("writeNext").onclick=loadWriteQuestion;}catch(err){btn.disabled=false;status(err.message);}};
-    }catch(e){host.textContent="无法生成题目："+e.message;}
+      if(q.done){host.innerHTML='<div class="test-complete"><h3>'+esc(q.message||"当前没有待复习义项")+'</h3><p>'+(q.next_review_date?"下次复习："+esc(q.next_review_date):"请先在掌握度页面启用写单词本义项。")+'</p></div>';return;}
+      host.innerHTML='<article class="write-test-card"><div class="write-test-meta"><span>写单词本 · 目标词拼写</span><span>'+esc(q.due_date||"")+'</span></div><div class="write-test-prompt-label">请根据下面的释义写出对应英文单词</div><div class="write-test-prompt">'+esc(q.prompt)+'</div><div class="write-test-pos">'+esc(q.pos||"词性未标注")+'</div><form id="writeTestForm" class="write-test-form"><input id="writeTestAnswer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入英文单词…" required><button class="primary-action">提交</button></form><div id="writeTestFeedback" aria-live="polite"></div><button id="writeTestNext" class="quiz-next" hidden>下一题</button></article>';
+      const input=$("#writeTestAnswer");
+      input.focus();
+      $("#writeTestForm").onsubmit=async e=>{
+        e.preventDefault();const form=e.currentTarget,button=form.querySelector("button");button.disabled=true;
+        try{
+          const r=await api("/api/mastery/write/guess",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question_id:q.question_id,answer:input.value})});
+          const feedback=$("#writeTestFeedback");
+          if(r.accepted_synonym&&!r.finished){
+            feedback.innerHTML='<div class="write-feedback synonym"><b>意思符合，不算错</b><p>'+esc(r.feedback)+'</p><p class="write-hint">'+esc(r.hint)+'</p></div>';
+            input.value="";button.disabled=false;input.focus();
+          }else{
+            input.disabled=true;button.disabled=true;
+            feedback.innerHTML='<div class="quiz-result '+(r.correct?"correct":"wrong")+'"><b>'+(r.correct?"拼写正确":"本题未答对")+'</b><p>'+(r.correct?"很好！":"正确答案："+esc(r.correct_answer))+'</p><small>下次复习：'+esc(r.next_review_date||"")+' · 连续正确 '+(r.streak||0)+' 次</small></div>';
+            $("#writeTestNext").hidden=false;$("#writeTestNext").onclick=loadWriteQuestion;
+            const o=await api("/api/mastery/write/overview");$("#writeTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';
+          }
+        }catch(err){button.disabled=false;$("#writeTestFeedback").textContent="提交失败："+err.message;}
+      };
+    }catch(e){host.innerHTML='<p class="test-wait">无法生成题目：'+esc(e.message)+'</p>';}
   }
+
   function showPrintChooser(){
     state.page="print";setSide("print");hideSuggestions();$("#welcome").hidden=true;$("#empty").hidden=true;
     $("#results").innerHTML='<section class="mastery-panel"><h2>纸条打印</h2><p>独立的 80mm 纯纸张页面，无需应用内打印按钮。</p><div class="print-mode-options"><a href="/print.html?mode=read" target="_blank">📖 读单词本纸条 <small>复习清单，不含检测题</small></a><a href="/print.html?mode=write" target="_blank">✎ 写单词本练习纸 <small>中文提示、英文填空、答案置于末尾</small></a></div></section>';
@@ -2327,6 +2380,10 @@ function speakWord(word) {
 
       } else if (b.dataset.page === "mastery") {
         showMastery("read");
+      } else if (b.dataset.page === "read-test") {
+        showReadTest();
+      } else if (b.dataset.page === "write-test") {
+        showWriteTest();
       } else if (b.dataset.page === "print") {
         showPrintChooser();
       } else if (b.dataset.page === "image-import") {
