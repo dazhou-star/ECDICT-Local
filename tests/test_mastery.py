@@ -63,10 +63,10 @@ class DistractorQualityTests(unittest.TestCase):
         parsed = _split_translation_for_distractors(
             "n. 木材；[化] 化学反应；[日] 日语借词；[美] 美国英语用法"
         )
-        self.assertIn(("", "木材", ""), parsed)
-        self.assertIn(("", "化学反应", "化"), parsed)
-        self.assertIn(("", "日语借词", "日"), parsed)
-        self.assertIn(("", "美国英语用法", "美"), parsed)
+        self.assertIn(("n", "木材", ""), parsed)
+        self.assertIn(("n", "化学反应", "化"), parsed)
+        self.assertIn(("n", "日语借词", "日"), parsed)
+        self.assertIn(("n", "美国英语用法", "美"), parsed)
 
     def test_hard_exclusions_are_applied_to_senses_not_entire_entry(self):
         self.assertTrue(_is_excluded_distractor_sense("化学反应", "化"))
