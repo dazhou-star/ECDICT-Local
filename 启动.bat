@@ -32,5 +32,9 @@ echo 局域网访问：请使用本机局域网 IP 和端口 %ECDICT_PORT%
 echo 按 Ctrl+C 可停止服务。
 echo.
 
-%PYTHON_CMD% -m uvicorn backend.main:app --host 0.0.0.0 --port %ECDICT_PORT%
+start "ECDICT-Local Server" /D "%~dp0" cmd /k "%PYTHON_CMD% -m uvicorn backend.main:app --host 0.0.0.0 --port %ECDICT_PORT%"
+timeout /t 3 /nobreak >nul
+start "" "http://127.0.0.1:%ECDICT_PORT%"
+echo.
+echo 服务已在独立窗口中启动。关闭服务窗口或按 Ctrl+C 可停止服务。
 pause
