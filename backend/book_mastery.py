@@ -320,12 +320,24 @@ def export_book_print(mode):
         for day,groups in zip(days,buckets):
             for g in groups:
                 if g["word"].casefold() in word_rows:day["words"].append(word_rows[g["word"].casefold()])
-                for s in g["senses"]:
-                    fs=conn.execute("SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",(s["sense_id"],)).fetchall()
-                    if mode=="write":
+                if mode=="write":
+                    # A spelling exercise is per word, not per sense fragment.
+                    # Combine distinct prompts from all active senses into one hint.
+                    prompts=[]
+                    seen_prompts=set()
+                    for s in g["senses"]:
+                        fs=conn.execute("SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",(s["sense_id"],)).fetchall()
                         for f in fs:
-                            day["exercises"].append({"word":s["word"],"pos":s["pos"],"prompt":f["fragment"]})
-                            day["answers"].append({"word":s["word"],"prompt":f["fragment"]})
+                            prompt=(f["fragment"] or "").strip()
+                            key=prompt.casefold()
+                            if prompt and key not in seen_prompts:
+                                seen_prompts.add(key)
+                                prompts.append(prompt)
+                    if prompts:
+                        combined_prompt="；".join(prompts)
+                        pos=" / ".join(dict.fromkeys(s["pos"] for s in g["senses"] if s["pos"]))
+                        day["exercises"].append({"word":g["word"],"pos":pos,"prompt":combined_prompt})
+                        day["answers"].append({"word":g["word"],"prompt":combined_prompt})
             day["words"].sort(key=lambda x:x["word"].casefold())
     return {"mode":mode,"week_start":start.isoformat(),"week_end":end.isoformat(),"days":days,
             "counts":{"words":sum(len(d["words"]) for d in days),
