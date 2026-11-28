@@ -235,6 +235,30 @@ def add_fragment(sense_id, fragment):
         return {"ok": True}
 
 
+
+def update_fragment(fragment_id, fragment):
+    fragment = _clean_fragment(fragment)
+    if not fragment or len(fragment) > 160:
+        raise ValueError("解释片段不能为空，且不能超过 160 个字符")
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT sense_id FROM sense_fragments WHERE id=? AND enabled=1",
+            (fragment_id,),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE sense_fragments SET fragment=? WHERE id=?", (fragment, fragment_id))
+        fragments = conn.execute(
+            "SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",
+            (row["sense_id"],),
+        ).fetchall()
+        conn.execute(
+            "UPDATE word_senses SET sense_text=? WHERE id=?",
+            ("；".join(r["fragment"] for r in fragments), row["sense_id"]),
+        )
+        conn.commit()
+        return {"ok": True}
+
 def _norm(value):
     return re.sub(r"\\s+", "", re.sub(r"[，,；;。！？!?、]", "", value or "")).casefold()
 
