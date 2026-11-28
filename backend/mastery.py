@@ -84,8 +84,74 @@ def init_mastery_tables():
             tested_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_history_sense ON sense_test_history(sense_id, tested_at DESC);
+        CREATE TABLE IF NOT EXISTS word_recognition (
+            word TEXT PRIMARY KEY COLLATE NOCASE,
+            is_unknown INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL
+        );
         """)
         conn.commit()
+
+
+def set_word_unknown(word, unknown=True, mode=None, question_id=None):
+    """Persist a word-level unknown marker; quiz marking also records a wrong answer."""
+    word = (word or "").strip()
+    if not word:
+        raise ValueError("单词不能为空")
+    if mode not in (None, "read", "write"):
+        raise ValueError("无效检测类型")
+    today = date.today().isoformat()
+    tested_at = now_iso()
+    with get_db() as conn:
+        if unknown:
+            conn.execute(
+                """INSERT INTO word_recognition(word,is_unknown,updated_at) VALUES(?,1,?)
+                   ON CONFLICT(word) DO UPDATE SET is_unknown=1,updated_at=excluded.updated_at""",
+                (word, tested_at),
+            )
+        else:
+            conn.execute("DELETE FROM word_recognition WHERE word=? COLLATE NOCASE", (word,))
+        recorded = False
+        if unknown and question_id:
+            params = [question_id]
+            sql = "SELECT q.*,s.word FROM mastery_questions q JOIN word_senses s ON s.id=q.sense_id WHERE q.question_id=?"
+            if mode:
+                sql += " AND q.mode=?"
+                params.append(mode)
+            q = conn.execute(sql, params).fetchone()
+            if q and not q["answered_at"] and q["word"].casefold() == word.casefold():
+                conn.execute(
+                    """INSERT INTO sense_test_history
+                       (sense_id,fragment_id,mode,fragment_snapshot,selected_answer,correct_answer,options_json,is_correct,tested_at)
+                       VALUES(?,?,?,?,?,?,?,0,?)""",
+                    (q["sense_id"], q["fragment_id"], q["mode"], q["prompt"],
+                     "不认识", q["correct_answer"], q["options_json"], tested_at),
+                )
+                conn.execute("UPDATE mastery_questions SET answered_at=? WHERE question_id=?",
+                             (tested_at, question_id))
+                conn.execute(
+                    """UPDATE sense_mastery SET next_review_date=?,last_test_date=?,streak=0,
+                       interval_days=1,status='learning',total_wrong=total_wrong+1
+                       WHERE sense_id=? AND mode=?""",
+                    (today, today, q["sense_id"], q["mode"]),
+                )
+                recorded = True
+        if unknown and not recorded:
+            conn.execute(
+                """UPDATE sense_mastery SET next_review_date=?,streak=0,interval_days=1,status='learning'
+                   WHERE sense_id IN (SELECT id FROM word_senses WHERE word=? COLLATE NOCASE)
+                     AND mode IN ('read','write')""",
+                (today, word),
+            )
+        conn.commit()
+    return {"word": word, "is_unknown": bool(unknown), "recorded_as_wrong": recorded}
+
+
+def is_word_unknown(conn, word):
+    return bool(conn.execute(
+        "SELECT 1 FROM word_recognition WHERE word=? COLLATE NOCASE AND is_unknown=1",
+        (word,),
+    ).fetchone())
 
 
 def _clean_fragment(value):
@@ -656,7 +722,7 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
                 return selected
     return selected
 
-def create_question():
+def create_question(include_future=False):
     today = date.today().isoformat()
     with get_db() as conn:
         # Lazily initialize missing review rows without changing favorites.study_date.
@@ -675,9 +741,9 @@ def create_question():
             """SELECT s.id, s.word, s.pos, s.sense_text, m.next_review_date, m.streak
                FROM word_senses s JOIN vocabulary_books fav ON fav.word=s.word COLLATE NOCASE AND fav.mode='read'
                JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
-               WHERE s.mode='read' AND s.review_state='active' AND m.next_review_date<=?
-               ORDER BY m.next_review_date ASC, m.streak ASC, RANDOM() LIMIT 30""",
-            (today,),
+               WHERE s.mode='read' AND s.review_state='active' AND (?=1 OR m.next_review_date<=?)
+               ORDER BY CASE WHEN m.next_review_date<=? THEN 0 ELSE 1 END, m.next_review_date ASC, m.streak ASC, RANDOM() LIMIT 30""",
+            (int(bool(include_future)), today, today),
         ).fetchall()
         if not due_rows:
             conn.commit()
@@ -710,6 +776,7 @@ def create_question():
         return {
             "done": False, "question_id": question_id, "word": sense["word"],
             "pos": POS_NAMES.get(sense["pos"], sense["pos"]), "options": options,
+            "is_unknown": is_word_unknown(conn, sense["word"]),
             "due_date": sense["next_review_date"],
         }
 
