@@ -76,7 +76,7 @@ footer{
 .day h2,.answer-key h2{font-size:22pt;padding:0;margin:0 0 .35mm;line-height:1.05}
 .word{padding:.2mm 0}
 .word b{font-size:30pt;line-height:1}
-.phonetic{font-size:7.5pt;margin-left:1mm}
+.phonetic{font-size:16pt;line-height:1.1;margin-left:1.5mm;vertical-align:baseline}
 .word small,.exercise small{font-size:7pt;margin-left:1mm}
 .word p{font-size:22pt;line-height:1.05;margin:0;white-space:pre-wrap}
 .exercise{padding:.25mm 0}
