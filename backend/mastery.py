@@ -415,8 +415,17 @@ def submit_answer(question_id, selected_answer):
             )
         if correct:
             streak = mastery["streak"] + 1
-            interval = INTERVALS[min(streak, len(INTERVALS)-1)]
-            status = "stable" if streak >= 6 else "learning"
+            # Do not lengthen the sense-level interval until every enabled
+            # fragment has been answered correctly at least once.
+            uncovered = conn.execute(
+                """SELECT COUNT(*) FROM sense_fragments f
+                   LEFT JOIN sense_test_history h
+                     ON h.fragment_id=f.id AND h.is_correct=1
+                   WHERE f.sense_id=? AND f.enabled=1 AND h.id IS NULL""",
+                (question["sense_id"],),
+            ).fetchone()[0]
+            interval = 1 if uncovered else INTERVALS[min(streak, len(INTERVALS)-1)]
+            status = "stable" if streak >= 6 and not uncovered else "learning"
             total_correct = conn.execute(
                 "SELECT total_correct FROM sense_mastery WHERE sense_id=? AND mode='read'",
                 (question["sense_id"],),
