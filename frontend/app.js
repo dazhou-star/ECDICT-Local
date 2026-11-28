@@ -2085,7 +2085,7 @@ function speakWord(word) {
       <div class="sense-list">${data.items.map(item => `
         <article class="sense-card" data-sense-id="${item.id}">
           <div class="sense-word"><b>${esc(item.word)}</b><span>${esc(item.pos || "未标注词性")}</span></div>
-          <div class="sense-fragments">${(item.fragments || "").split("；").filter(Boolean).map((x,i)=>`<span><input class="fragment-correction" data-fragment-index="${i}" value="${esc(x)}" maxlength="160"><button class="fragment-save" data-fragment-index="${i}">保存</button></span>`).join("")}</div>
+          <div class="sense-fragments">${(item.fragments || "").split("；").filter(Boolean).map((x,i)=>`<span><input class="fragment-correction" data-fragment-index="${i}" value="${esc(x)}" maxlength="160"><button class="fragment-save" data-fragment-index="${i}">保存</button><button class="fragment-split" data-fragment-index="${i}">拆为新义项</button></span>`).join("")}</div>
           <div class="sense-source">原始释义：${esc(item.source_translation || "")}</div>
           <div class="sense-edit"><input class="new-fragment" maxlength="160" placeholder="添加或修正一个解释片段"><button data-sense-action="add">添加片段</button></div>
           <div class="sense-buttons"><button data-sense-action="active">确认并启用</button><button data-sense-action="ignored">暂不学习</button></div>
@@ -2107,6 +2107,17 @@ function speakWord(word) {
         } catch(e) { status("片段修改失败："+e.message); }
       });
     });
+    target.querySelectorAll(".fragment-split").forEach(button => button.addEventListener("click", async () => {
+      const card = button.closest("[data-sense-id]");
+      const id = card.dataset.senseId;
+      const index = Number(button.dataset.fragmentIndex);
+      if (!window.confirm("将这个解释片段独立为一个新义项？")) return;
+      try {
+        await api(`/api/mastery/senses/${id}/fragments/${index}/split`, {method:"POST"});
+        await showSenseReview();
+        status("已拆分为独立义项");
+      } catch(e) { status("拆分失败："+e.message); }
+    }));
     target.querySelectorAll("[data-sense-action]").forEach(button => button.addEventListener("click", async () => {
       const card = button.closest("[data-sense-id]");
       const id = card.dataset.senseId;
