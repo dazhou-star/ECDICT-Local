@@ -44,7 +44,7 @@ def search_words(q: str, limit: int = 15, offset: int = 0, mode: str = "prefix")
             item = dict(row)
             candidates[item["word"].casefold()] = item
 
-        if mode == "prefix" and len(q) >= 4:
+        if len(q) >= 4:
             low = max(1, len(q) - (2 if len(q) >= 7 else 1))
             high = len(q) + (2 if len(q) >= 7 else 1)
             if q[0:1].isalpha():
