@@ -281,6 +281,44 @@ def update_fragment_by_order(sense_id, source_order, fragment):
         conn.commit()
         return {"ok": True}
 
+
+def split_fragment_to_sense(sense_id, source_order):
+    with get_db() as conn:
+        source = conn.execute(
+            "SELECT * FROM word_senses WHERE id=? AND mode='read' AND review_state='draft'",
+            (sense_id,),
+        ).fetchone()
+        fragment = conn.execute(
+            "SELECT * FROM sense_fragments WHERE sense_id=? AND source_order=? AND enabled=1",
+            (sense_id, source_order),
+        ).fetchone()
+        if not source or not fragment:
+            return None
+        next_order = conn.execute(
+            "SELECT COALESCE(MAX(source_order),-1)+1 FROM word_senses WHERE word=? COLLATE NOCASE AND mode='read'",
+            (source["word"],),
+        ).fetchone()[0]
+        cursor = conn.execute(
+            """INSERT INTO word_senses
+               (word,mode,pos,sense_text,source_translation,source_order,review_state,created_at)
+               VALUES (?,'read',?,?,?,?, 'draft',?)""",
+            (source["word"], source["pos"], fragment["fragment"],
+             source["source_translation"], next_order, now_iso()),
+        )
+        new_sense_id = cursor.lastrowid
+        conn.execute(
+            "UPDATE sense_fragments SET sense_id=?, source_order=0 WHERE id=?",
+            (new_sense_id, fragment["id"]),
+        )
+        remaining = conn.execute(
+            "SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",
+            (sense_id,),
+        ).fetchall()
+        conn.execute("UPDATE word_senses SET sense_text=? WHERE id=?",
+                     ("；".join(row["fragment"] for row in remaining), sense_id))
+        conn.commit()
+        return {"ok": True, "new_sense_id": new_sense_id}
+
 def _norm(value):
     return re.sub(r"\\s+", "", re.sub(r"[，,；;。！？!?、]", "", value or "")).casefold()
 
