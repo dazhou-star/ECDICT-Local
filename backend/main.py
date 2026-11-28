@@ -776,7 +776,7 @@ def import_favorites(payload: FavoriteImportRequest):
     with get_db() as conn:
         for word in reversed(words):
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO favorites (word, added_at, study_date) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO vocabulary_books (word, mode, added_at, study_date) VALUES (?, 'read', ?, ?)",
                 (word, now, study_date),
             )
             imported += max(cursor.rowcount, 0)
@@ -809,7 +809,7 @@ def bulk_add_favorites(payload: FavoriteBulkRequest):
     with get_db() as conn:
         for word, study_date in words:
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO favorites (word, added_at, study_date) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO vocabulary_books (word, mode, added_at, study_date) VALUES (?, 'read', ?, ?)",
                 (word, now, study_date),
             )
             created += max(cursor.rowcount, 0)
