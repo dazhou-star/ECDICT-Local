@@ -561,3 +561,8 @@ body.dark .word-stat-value>b {color:color-mix(in srgb,var(--stat-accent) 75%,whi
 .quiz-next{margin-top:14px}
 @media(max-width:760px){.mastery-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.mastery-panel{padding:18px}.mastery-subhead{align-items:flex-start;flex-direction:column}}
 @media(max-width:440px){.mastery-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.sense-edit{flex-direction:column}.quiz-card{padding:18px}.quiz-card h3{font-size:29px}}
+
+
+.sense-fragments>span{display:inline-flex;align-items:center;gap:5px;padding:4px 6px;border-radius:8px;background:var(--soft)}
+.fragment-correction{width:120px;max-width:45vw;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font-size:12px}
+.fragment-save{border:0;border-radius:5px;padding:4px 6px;background:var(--panel);color:var(--blue);font-size:10px;cursor:pointer}
