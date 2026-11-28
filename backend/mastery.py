@@ -419,10 +419,12 @@ def _too_similar_meaning(left, right, threshold=0.25):
 
 
 def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
-    """Choose distinct same-POS distractors from ECDICT, with practical fallbacks.
+    """Prefer useful, common vocabulary while retaining safe fallbacks.
 
-    Chinese-character overlap is used only to reject obvious near-duplicates;
-    it is never used to seek similar-looking meanings.
+    ECDICT metadata is used in tiers:
+    1) high-school (gk) tagged entries;
+    2) entries with non-zero frequency (frq), or Oxford 3000 entries;
+    3) the wider dictionary only when the preferred pools are insufficient.
     """
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
     if "translation" not in columns:
@@ -432,28 +434,58 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
     if not maximum:
         return []
 
-    # Sample several bounded rowid windows so candidate discovery does not
-    # depend on Chinese LIKE searches or repeatedly favor nearby dictionary rows.
+    metadata_columns = []
+    for name in ("frq", "tag", "oxford"):
+        if name in columns:
+            metadata_columns.append(name)
+    select_columns = ["word", "translation"] + metadata_columns
     rows_by_word = {}
-    for _ in range(6):
+    for _ in range(12):
         start = random.randint(1, maximum)
         rows = conn.execute(
-            """SELECT word, translation FROM words
-               WHERE rowid>=? AND translation<>'' AND word<>? COLLATE NOCASE
-               LIMIT 900""",
+            f"SELECT {', '.join(select_columns)} FROM words "
+            "WHERE rowid>=? AND translation<>'' AND word<>? COLLATE NOCASE LIMIT 900",
             (start, target_word),
         ).fetchall()
         for row in rows:
             rows_by_word.setdefault(row["word"].casefold(), row)
-        if len(rows_by_word) >= 2500:
+        if len(rows_by_word) >= 5000:
             break
 
     target_family = _pos_family(target_pos)
-    same_pos, other_pos = [], []
+    # Keep separate pools so rare dictionary entries are only used as a fallback.
+    pools = {
+        "same_gk": [], "same_common": [], "same_any": [],
+        "other_gk": [], "other_common": [], "other_any": [],
+    }
     seen_glosses = {_norm(correct)}
     for row in rows_by_word.values():
+        tag = str(row["tag"] or "").casefold() if "tag" in columns else ""
+        tag_tokens = set(re.findall(r"[a-z0-9_]+", tag))
+        is_high_school = "gk" in tag_tokens
+        try:
+            has_frequency = int(row["frq"] or 0) > 0 if "frq" in columns else False
+        except (TypeError, ValueError):
+            has_frequency = False
+        try:
+            is_oxford = int(row["oxford"] or 0) > 0 if "oxford" in columns else False
+        except (TypeError, ValueError):
+            is_oxford = False
+
+        # Proper names and place names are poor general-purpose meaning distractors.
+        if tag_tokens.intersection({"name", "proper", "person", "place", "地名", "人名"}):
+            continue
+
+        if is_high_school:
+            tier = "gk"
+        elif has_frequency or is_oxford:
+            tier = "common"
+        else:
+            tier = "any"
+
         for candidate_pos, fragments in split_translation(row["translation"] or ""):
-            destination = same_pos if _pos_family(candidate_pos) == target_family else other_pos
+            pos_group = "same" if _pos_family(candidate_pos) == target_family else "other"
+            destination = pools[f"{pos_group}_{tier}"]
             for value in fragments:
                 key = _norm(value)
                 if len(value) < 2 or not key or key in seen_glosses:
@@ -463,33 +495,26 @@ def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
                 seen_glosses.add(key)
                 destination.append(value)
 
-    random.shuffle(same_pos)
-    random.shuffle(other_pos)
+    for pool in pools.values():
+        random.shuffle(pool)
+
     selected = []
+    # Same part of speech first; within each POS group, prefer high-school,
+    # then frequency/Oxford-backed vocabulary, and only then the full dictionary.
+    for pool_name in ("same_gk", "same_common", "same_any",
+                      "other_gk", "other_common", "other_any"):
+        for value in pools[pool_name]:
+            if any(_too_similar_meaning(value, chosen) for chosen in [correct, *selected]):
+                continue
+            selected.append(value)
+            if len(selected) >= limit:
+                return selected
 
-    # First pass: clearly different meanings, including avoiding near-duplicate
-    # options among the distractors themselves.
-    for value in same_pos:
-        if any(_too_similar_meaning(value, chosen) for chosen in [correct, *selected]):
-            continue
-        selected.append(value)
-        if len(selected) >= limit:
-            return selected
-
-    # Second pass: use other parts of speech before relaxing the similarity
-    # filter, so the question still gets three distinct distractors in normal
-    # dictionary conditions.
-    for value in other_pos:
-        if any(_too_similar_meaning(value, chosen) for chosen in [correct, *selected]):
-            continue
-        selected.append(value)
-        if len(selected) >= limit:
-            return selected
-
-    # Last-resort fallback: four choices take priority over perfect distractor
-    # quality. Exact duplicates and direct substring variants remain excluded.
-    for pool in (same_pos, other_pos):
-        for value in pool:
+    # Last resort: keep the question usable even if strict similarity filtering
+    # leaves too few options. Exact duplicates and direct substring variants stay out.
+    for pool_name in ("same_gk", "same_common", "same_any",
+                      "other_gk", "other_common", "other_any"):
+        for value in pools[pool_name]:
             key = _norm(value)
             if not key or any(key == _norm(chosen) for chosen in [correct, *selected]):
                 continue
