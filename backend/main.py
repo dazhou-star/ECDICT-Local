@@ -19,7 +19,7 @@ from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table, init_vocabulary_books
-from .book_mastery import initialize_books_mastery, get_overview, list_book_senses, set_sense_state, next_write_question, answer_write_question, export_book_print
+from .book_mastery import initialize_books_mastery, get_overview, list_book_senses, set_sense_state, next_write_question, answer_write_question, guess_write_question, create_question, submit_answer, export_book_print
 
 class VocabularyBookRequest(BaseModel):
     word: str
@@ -869,6 +869,33 @@ def mastery_set_sense_state(mode: str, sense_id: int, payload: dict):
         raise HTTPException(status_code=422, detail=str(exc))
     if result is None:
         raise HTTPException(status_code=404, detail="未找到该义项")
+    return result
+
+
+@app.get("/api/mastery/read/question")
+def mastery_read_question():
+    return create_question()
+
+
+@app.post("/api/mastery/read/answer")
+def mastery_read_answer(payload: WriteAnswerRequest):
+    try:
+        result = submit_answer(payload.question_id, payload.answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="题目不存在或已失效")
+    return result
+
+
+@app.post("/api/mastery/write/guess")
+def mastery_write_guess(payload: WriteAnswerRequest):
+    try:
+        result = guess_write_question(payload.question_id, payload.answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="题目不存在或已失效")
     return result
 
 
