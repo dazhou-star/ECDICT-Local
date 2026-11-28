@@ -93,7 +93,7 @@ def _clean_fragment(value):
     value = re.sub(r"^\s*\[[^]]{1,16}\]\s*", "", value)
     value = re.sub(r"\s+", " ", value).strip()
     # Remove punctuation fragments left behind by splitting dictionary glosses.
-    value = value.strip(" ，,；;。.!?！？:：、")
+    value = value.strip(" ，,；;。.!?！？:：、…“”‘’")
     # Remove unmatched bracket characters without disturbing balanced examples.
     pairs = {"(": ")", "（": "）", "[": "]", "【": "】", "{": "}"}
     for opening, closing in pairs.items():
@@ -103,7 +103,7 @@ def _clean_fragment(value):
         while value.count(closing) > value.count(opening):
             index = value.find(closing)
             value = value[:index] + value[index + 1:]
-    value = value.strip(" ，,；;。.!?！？:：、")
+    value = value.strip(" ，,；;。.!?！？:：、…“”‘’")
     return value.strip()
 
 
