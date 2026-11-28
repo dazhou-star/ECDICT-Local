@@ -9,7 +9,7 @@ set "PYTHON_CMD="
 py -3.10 --version >nul 2>&1
 if not errorlevel 1 set "PYTHON_CMD=py -3.10"
 if not defined PYTHON_CMD (
-    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+    python scripts\check_python.py >nul 2>&1
     if not errorlevel 1 set "PYTHON_CMD=python"
 )
 if not defined PYTHON_CMD (
