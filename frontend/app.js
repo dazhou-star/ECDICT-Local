@@ -2031,6 +2031,72 @@ function speakWord(word) {
   });
 
 
+  async function showPrint() {
+    state.page = "print";
+    setSide("print");
+    hideSuggestions();
+    $("#welcome").hidden = true;
+    $("#empty").hidden = true;
+    status("纸带打印");
+    $("#results").innerHTML = `
+      <section class="roll-print-panel">
+        <header class="roll-print-head"><div><div class="collection-kicker">OFFLINE PAPER STUDY</div><h2>纸带打印</h2><p>80 mm 连续纸带 · 单词本、练习与末尾答案区</p></div><b>80 mm</b></header>
+        <div class="roll-print-controls">
+          <label>加入日期起始<input id="printStartDate" type="date"></label><label>结束<input id="printEndDate" type="date"></label>
+          <div class="roll-print-modes"><button data-print-mode="all" class="active">单词 + 练习</button><button data-print-mode="words">仅单词</button><button data-print-mode="exercises">仅练习</button></div>
+          <button id="reloadPrintData">刷新预览</button><button id="printRoll" class="roll-print-primary">打印纸带</button>
+          <p>打印时选择 80 mm 连续纸、缩放 100%、关闭页眉页脚。</p><div id="printStatus">正在读取…</div>
+        </div>
+        <div id="printSheet" class="roll-print-sheet"></div>
+      </section>`;
+    let data = null;
+    let mode = "all";
+    const sheet = $("#printSheet");
+    const statusEl = $("#printStatus");
+    function render() {
+      if (!data) return;
+      let html = '<h2>LEXICON · 纸质学习册</h2>';
+      if (mode !== "exercises") {
+        html += '<h3>单词本 · ' + data.words.length + ' 词</h3>';
+        html += data.words.map((w,i) => '<article class="roll-word"><b>' + (i+1) + '. ' + esc(w.word) + '</b>' +
+          (w.phonetic ? '<small>' + esc(w.phonetic) + '</small>' : '') +
+          '<div>' + esc(w.pos || '') + '</div><p>' + esc(w.translation || '暂无中文释义') + '</p>' +
+          (w.exchange ? '<small>词形：' + esc(w.exchange) + '</small>' : '') + '</article>').join('');
+      }
+      if (mode !== "words") {
+        html += '<h3>练习 · ' + data.exercises.length + ' 题</h3>';
+        html += data.exercises.map((q,i) => '<article class="roll-question"><b>' + (i+1) + '. ' + esc(q.word) + '</b><ol type="A">' +
+          q.options.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol><p>作答： □ A　□ B　□ C　□ D</p></article>').join('');
+        html += '<h3>答案区</h3>' + data.exercises.map((q,i) => '<p class="roll-answer-key">' + (i+1) + '. ' + 'ABCD'[q.answer] + ' · ' + esc(q.word) + '：' + esc(q.meaning) + '</p>').join('');
+      }
+      sheet.innerHTML = html + '<p class="roll-print-end">— LEXICON · END —</p>';
+      statusEl.textContent = '已载入 ' + data.words.length + ' 个单词、' + data.exercises.length + ' 道练习；' +
+        (data.counts.skipped_exercises || 0) + ' 个义项因干扰项不足未生成题目。';
+    }
+    async function load() {
+      statusEl.textContent = '正在读取生词本…';
+      const p = new URLSearchParams();
+      if ($("#printStartDate").value) p.set('start_date', $("#printStartDate").value);
+      if ($("#printEndDate").value) p.set('end_date', $("#printEndDate").value);
+      try { data = await api('/api/print/data' + (p.size ? '?' + p.toString() : '')); render(); }
+      catch (e) { statusEl.textContent = '读取失败：' + e.message; }
+    }
+    document.querySelectorAll('[data-print-mode]').forEach(b => b.addEventListener('click', () => {
+      mode = b.dataset.printMode;
+      document.querySelectorAll('[data-print-mode]').forEach(x => x.classList.toggle('active', x === b));
+      render();
+    }));
+    $("#reloadPrintData").addEventListener('click', load);
+    $("#printRoll").addEventListener('click', () => {
+      if (!data || !data.words.length) { statusEl.textContent = '当前没有可打印的单词。'; return; }
+      document.body.classList.add('printing-roll');
+      window.addEventListener('afterprint', () => document.body.classList.remove('printing-roll'), {once:true});
+      window.print();
+      setTimeout(() => document.body.classList.remove('printing-roll'), 1500);
+    });
+    await load();
+  }
+
   async function showMastery() {
     state.page = "mastery";
     setSide("mastery");
@@ -2312,6 +2378,10 @@ function speakWord(word) {
       } else if (b.dataset.page === "mastery") {
 
         showMastery();
+
+      } else if (b.dataset.page === "print") {
+
+        showPrint();
 
       } else if (b.dataset.page === "image-import") {
 
