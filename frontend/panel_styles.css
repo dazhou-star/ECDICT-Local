@@ -1074,3 +1074,57 @@ body.printing-roll #printSheet { position:absolute; top:0; left:0; width:76mm; m
   body.printing-roll #printSheet { position:absolute; top:0; left:0; width:76mm; max-width:none; margin:0; padding:0; border:0; box-shadow:none; color:#000; background:#fff; }
   .roll-word,.roll-question,.roll-answer-key { break-inside:avoid; page-break-inside:avoid; }
 }
+
+
+/* Weekly continuous-paper review layout */
+.roll-weekly-panel .roll-print-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.roll-weekly-panel .roll-print-controls #printStatus {
+  color: var(--muted, #777);
+  font-size: 13px;
+}
+.roll-day {
+  break-inside: auto;
+  page-break-inside: auto;
+  border-top: 1px dashed #777;
+  margin-top: 14px;
+  padding-top: 8px;
+}
+.roll-day > h3 {
+  font-size: 17px;
+  margin: 8px 0 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #222;
+}
+.roll-day > h4 {
+  font-size: 13px;
+  margin: 10px 0 5px;
+}
+.roll-empty-day {
+  font-size: 12px;
+  color: #555;
+  padding: 4px 0 8px;
+}
+.roll-word-forms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+.roll-word-forms span { display: inline-flex; gap: 4px; }
+.roll-word-forms em {
+  font-style: normal;
+  font-weight: 700;
+}
+.roll-answer-section {
+  border-top: 2px solid #111;
+  margin-top: 18px;
+  padding-top: 8px;
+  break-before: page;
+  page-break-before: always;
+}
