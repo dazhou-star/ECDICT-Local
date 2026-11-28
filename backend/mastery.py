@@ -742,8 +742,9 @@ def create_question(include_future=False):
                FROM word_senses s JOIN vocabulary_books fav ON fav.word=s.word COLLATE NOCASE AND fav.mode='read'
                JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
                WHERE s.mode='read' AND s.review_state='active' AND (?=1 OR m.next_review_date<=?)
+                 AND (?=0 OR COALESCE(m.last_test_date,'')<>?)
                ORDER BY CASE WHEN m.next_review_date<=? THEN 0 ELSE 1 END, m.next_review_date ASC, m.streak ASC, RANDOM() LIMIT 30""",
-            (int(bool(include_future)), today, today),
+            (int(bool(include_future)), today, int(bool(include_future)), today, today),
         ).fetchall()
         if not due_rows:
             conn.commit()
