@@ -809,20 +809,8 @@ def mastery_split_fragment(sense_id: int, source_order: int):
     return result
 
 @app.get("/api/print/data")
-def print_data(
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-):
-    try:
-        if start_date:
-            date.fromisoformat(start_date)
-        if end_date:
-            date.fromisoformat(end_date)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="日期格式必须为 YYYY-MM-DD")
-    if start_date and end_date and start_date > end_date:
-        raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
-    return export_print_data(start_date, end_date)
+def print_data():
+    return export_print_data()
 
 @app.get("/api/mastery/question")
 def mastery_question():
