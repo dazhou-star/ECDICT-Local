@@ -19,6 +19,7 @@ from .lemma import normalize_words
 from .config import FRONTEND_DIR, HOST, PORT, IMAGE_IMPORT_DIR
 from .search import search_words, get_word, random_word, get_stats, get_similar, get_root, get_lemma
 from .db import get_db, init_favorites_table, init_vocabulary_books
+from .book_mastery import initialize_books_mastery, get_overview, list_book_senses, set_sense_state, next_write_question, answer_write_question, export_book_print
 
 class VocabularyBookRequest(BaseModel):
     word: str
@@ -66,6 +67,11 @@ class ImageCorrectionRequest(BaseModel):
 
 class ImageNormalizeRequest(BaseModel):
     words: List[str]
+
+
+class WriteAnswerRequest(BaseModel):
+    question_id: str
+    answer: str
 
 
 def utc_now_iso():
@@ -366,6 +372,7 @@ app = FastAPI(
 def startup_initialize_database():
     init_favorites_table()
     init_vocabulary_books()
+    initialize_books_mastery()
 
 @app.get("/api/health")
 def health():
@@ -832,6 +839,52 @@ def remove_favorite(word: str):
         conn.commit()
     return {"ok": True, "deleted": cursor.rowcount > 0}
 
+
+
+@app.get("/api/mastery/{mode}/overview")
+def mastery_overview(mode: str):
+    mode = validate_book_mode(mode)
+    return get_overview(mode)
+
+
+@app.get("/api/mastery/{mode}/senses")
+def mastery_senses(mode: str, state: str = Query("all", pattern="^(all|draft|active|ignored)$")):
+    mode = validate_book_mode(mode)
+    return {"mode": mode, "items": list_book_senses(mode, state)}
+
+
+@app.post("/api/mastery/{mode}/senses/{sense_id}/state")
+def mastery_set_sense_state(mode: str, sense_id: int, payload: dict):
+    mode = validate_book_mode(mode)
+    try:
+        result = set_sense_state(sense_id, mode, str(payload.get("state", "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="未找到该义项")
+    return result
+
+
+@app.post("/api/mastery/write/question")
+def mastery_write_question():
+    return next_write_question()
+
+
+@app.post("/api/mastery/write/answer")
+def mastery_write_answer(payload: WriteAnswerRequest):
+    try:
+        result = answer_write_question(payload.question_id, payload.answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="题目不存在或已失效")
+    return result
+
+
+@app.get("/api/print/{mode}/data")
+def book_print_data(mode: str):
+    mode = validate_book_mode(mode)
+    return export_book_print(mode)
 
 
 @app.get("/api/word/{word}")
