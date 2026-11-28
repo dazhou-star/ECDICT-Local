@@ -16,7 +16,7 @@ py -3.10 --version >nul 2>&1
 if not errorlevel 1 set "PYTHON_CMD=py -3.10"
 
 if not defined PYTHON_CMD (
-    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+    python scripts\check_python.py >nul 2>&1
     if not errorlevel 1 set "PYTHON_CMD=python"
 )
 
@@ -64,7 +64,7 @@ if not exist "%DB_PATH%" (
 ) else (
     echo 已发现数据库：%DB_PATH%
     echo 为保护现有数据，本脚本不会重建、覆盖或迁移替换该数据库。
-    %PYTHON_CMD% -c "import os,sqlite3,sys; p=os.environ.get('ECDICT_DB','database/dictionary.db'); c=sqlite3.connect(p); ok=c.execute('SELECT 1 FROM sqlite_master WHERE type=? AND name=?',('table','words')).fetchone(); n=c.execute('SELECT COUNT(*) FROM words').fetchone()[0] if ok else 0; c.close(); print('现有词条数：',n); sys.exit(0 if n>0 else 2)"
+    %PYTHON_CMD% scripts\check_database.py
     if errorlevel 1 (
         echo [错误] 数据库存在，但没有可用的 words 词条表。
         echo 为避免覆盖用户数据，部署脚本已停止。请先备份 database 文件夹并手动排查。
