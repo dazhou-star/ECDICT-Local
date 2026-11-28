@@ -65,3 +65,27 @@ footer{
   font-family:"Iowan Old Style","Baskerville","Palatino Linotype",Georgia,"Noto Serif", "Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif;
   font-weight:500;
 }
+
+
+/* Compact print layout with larger study content */
+.paper{padding:2mm 3mm;font-size:10pt}
+.paper-head{padding-bottom:.35mm;margin-bottom:.45mm}
+.paper-head h1{font-size:46pt;margin:0;line-height:1}
+.paper-head p{font-size:25pt;margin:0;line-height:1.08}
+.day{margin:0 0 .65mm}
+.day h2,.answer-key h2{font-size:22pt;padding:0;margin:0 0 .35mm;line-height:1.05}
+.word{padding:.2mm 0}
+.word b{font-size:30pt;line-height:1}
+.phonetic{font-size:7.5pt;margin-left:1mm}
+.word small,.exercise small{font-size:7pt;margin-left:1mm}
+.word p{font-size:22pt;line-height:1.05;margin:0;white-space:pre-wrap}
+.exercise{padding:.25mm 0}
+.prompt{font-size:10pt;line-height:1.15}
+.blank{font-size:9pt;margin-top:.35mm;line-height:1.05}
+.answer-key{margin-top:1mm;padding-top:.5mm}
+.answer-key p{font-size:9pt;margin:.6mm 0;line-height:1.1}
+.answer-key small{font-size:7pt}
+footer{margin-top:.7mm;padding-top:.4mm;line-height:1}
+@media print{
+  main#paper.paper{padding:2mm 3mm!important}
+}
