@@ -1,4 +1,6 @@
 import re
+import math
+import random
 from .db import connect
 
 def _escape_like(value: str) -> str:
@@ -35,10 +37,38 @@ def get_word(word: str):
         conn.close()
 
 def random_word():
+    """Sample a bounded pool and favor common ECDICT frequency ranks."""
     conn = connect()
     try:
-        row = conn.execute("SELECT word FROM words WHERE word <> '' ORDER BY RANDOM() LIMIT 1").fetchone()
-        return row["word"] if row else None
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(words)")}
+        if "frq" not in columns:
+            row = conn.execute("SELECT word FROM words WHERE word<>'' ORDER BY RANDOM() LIMIT 1").fetchone()
+            return row["word"] if row else None
+        maximum = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM words").fetchone()[0]
+        if not maximum:
+            return None
+        candidates = {}
+        for _ in range(12):
+            start = random.randint(1, maximum)
+            rows = conn.execute(
+                "SELECT word,frq FROM words WHERE rowid>=? AND word<>'' LIMIT 900",
+                (start,),
+            ).fetchall()
+            for row in rows:
+                candidates.setdefault(row["word"].casefold(), row)
+            if len(candidates) >= 5000:
+                break
+        if not candidates:
+            return None
+        words, weights = [], []
+        for row in candidates.values():
+            try:
+                rank = int(row["frq"] or 0)
+            except (TypeError, ValueError):
+                rank = 0
+            words.append(row["word"])
+            weights.append(0.04 if rank <= 0 else 1.0 / math.sqrt(max(1, rank)))
+        return random.choices(words, weights=weights, k=1)[0]
     finally:
         conn.close()
 
