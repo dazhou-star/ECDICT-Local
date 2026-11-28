@@ -863,34 +863,27 @@ def _select_print_distractors(index, correct, target_pos, target_word, limit=3):
     correct_key = _norm(correct)
     selected = []
     selected_keys = {correct_key}
-    ordered = []
-    for group in ("same", "other"):
-        for tier in ("gk", "common", "any"):
-            ordered.append((group, tier))
-    # Prefer same POS; retain the original tier ordering.
-    pools = []
-    for group in ("same", "other"):
-        for tier in ("gk", "common", "any"):
-            pools.append((group, tier))
-    for group, tier in pools:
-        candidates = index.get(f"{group}_{tier}", [])
+    for wanted_same_pos in (True, False):
+        for tier in ('gk', 'common', 'any'):
+            candidates = index.get('same_' + tier, []) + index.get('other_' + tier, [])
+            for candidate_word, candidate_pos, value in candidates:
+                same_pos = _pos_family(candidate_pos) == target_family
+                if same_pos != wanted_same_pos:
+                    continue
+                key = _norm(value)
+                if candidate_word == target_word.casefold() or not key or key in selected_keys:
+                    continue
+                if key in correct_key or correct_key in key:
+                    continue
+                if _too_similar_meaning(value, correct) or any(_too_similar_meaning(value, chosen) for chosen in selected):
+                    continue
+                selected.append(value)
+                selected_keys.add(key)
+                if len(selected) >= limit:
+                    return selected
+    for tier in ('gk', 'common', 'any'):
+        candidates = index.get('same_' + tier, []) + index.get('other_' + tier, [])
         for candidate_word, candidate_pos, value in candidates:
-            key = _norm(value)
-            if candidate_word == target_word.casefold() or not key or key in selected_keys:
-                continue
-            if key in correct_key or correct_key in key:
-                continue
-            if _pos_family(candidate_pos) != target_family and group == "same":
-                continue
-            if _too_similar_meaning(value, correct) or any(_too_similar_meaning(value, chosen) for chosen in selected):
-                continue
-            selected.append(value)
-            selected_keys.add(key)
-            if len(selected) >= limit:
-                return selected
-    # Fallback retains exact/substring exclusions but relaxes semantic similarity.
-    for group, tier in pools:
-        for candidate_word, candidate_pos, value in index.get(f"{group}_{tier}", []):
             key = _norm(value)
             if candidate_word == target_word.casefold() or not key or key in selected_keys:
                 continue
@@ -901,7 +894,6 @@ def _select_print_distractors(index, correct, target_pos, target_word, limit=3):
             if len(selected) >= limit:
                 return selected
     return selected
-
 
 def _next_week_range(today=None):
     today = today or date.today()
