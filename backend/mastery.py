@@ -426,7 +426,7 @@ DISTRACTOR_FOREIGN_RE = re.compile(
 def _split_translation_for_distractors(translation):
     """Return (pos, clean gloss, leading ECDICT marker) without losing metadata."""
     text = (translation or "")
-    text = text.replace("\\\\r\\\\n", "\n").replace("\\\\n", "\n").replace("\\\\r", "\n")
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
     groups = []
     current_pos = ""
     current_parts = []
@@ -436,7 +436,7 @@ def _split_translation_for_distractors(translation):
         raw = "\n".join(part for part in current_parts if part).strip()
         for piece in re.split(r"[；;，,、\n]+", raw):
             piece = re.sub(r"<[^>]*>", " ", piece or "").strip()
-            marker_match = re.match(r"^\\s*\\[([^]]{1,16})\\]\\s*", piece)
+            marker_match = re.match(r"^\s*\[([^]]{1,16})\]\s*", piece)
             marker = marker_match.group(1).strip() if marker_match else ""
             if marker_match:
                 piece = piece[marker_match.end():]
@@ -462,7 +462,7 @@ def _split_translation_for_distractors(translation):
     if not groups:
         for piece in re.split(r"[；;，,、\\n]+", text):
             piece = (piece or "").strip()
-            marker_match = re.match(r"^\\s*\\[([^]]{1,16})\\]\\s*", piece)
+            marker_match = re.match(r"^\s*\[([^]]{1,16})\]\s*", piece)
             marker = marker_match.group(1).strip() if marker_match else ""
             if marker_match:
                 piece = piece[marker_match.end():]
