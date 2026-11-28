@@ -915,7 +915,7 @@ def _distribute_print_words(word_groups, day_count=6):
         return [[] for _ in range(day_count)]
     total_weight = sum(max(1, int(item.get("weight", 1))) for item in word_groups)
     target = max(1.0, total_weight / day_count)
-    capacity = max(1, max(int(item.get("weight", 1)) for item in word_groups), int((target * 1.35) + 0.9999))
+    capacity = max(1, int((target * 1.35) + 0.9999))
     buckets = [[] for _ in range(day_count)]
     loads = [0] * day_count
 
