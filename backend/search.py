@@ -178,6 +178,54 @@ def _search_raw_table(table: str, query: str, limit: int = 30):
 def get_similar(query: str, limit: int = 20):
     return _search_raw_table("resemble_raw", query, limit)
 
+
+def get_word_comparisons(word: str, limit: int = 10):
+    """Return complete resemble.txt comparison groups that list this exact word."""
+    target = (word or "").strip().casefold()
+    if not target:
+        return []
+    conn = connect()
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='resemble_raw'"
+        ).fetchone()
+        if not exists:
+            return []
+        headers = conn.execute(
+            """SELECT line_no, content FROM resemble_raw
+               WHERE substr(ltrim(content),1,1)='%' AND lower(content) LIKE ?
+               ORDER BY line_no LIMIT 100""",
+            ("%" + target + "%",),
+        ).fetchall()
+        results = []
+        for header in headers:
+            title = (header["content"] or "").strip().lstrip("%").strip()
+            members = [part.strip().strip(" .;") for part in title.split(",")]
+            if not any(member.casefold() == target for member in members):
+                continue
+            next_header = conn.execute(
+                """SELECT MIN(line_no) FROM resemble_raw
+                   WHERE line_no>? AND substr(ltrim(content),1,1)='%'""",
+                (header["line_no"],),
+            ).fetchone()[0]
+            if next_header is None:
+                body_rows = conn.execute(
+                    "SELECT content FROM resemble_raw WHERE line_no>? ORDER BY line_no",
+                    (header["line_no"],),
+                ).fetchall()
+            else:
+                body_rows = conn.execute(
+                    "SELECT content FROM resemble_raw WHERE line_no>? AND line_no<? ORDER BY line_no",
+                    (header["line_no"], next_header),
+                ).fetchall()
+            body = "\n".join((row["content"] or "") for row in body_rows).strip()
+            results.append({"title": title, "words": members, "content": body})
+            if len(results) >= max(1, min(int(limit), 20)):
+                break
+        return results
+    finally:
+        conn.close()
+
 def get_root(query: str):
     return _search_raw_table("wordroot_raw", query, 30)
 
