@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from .db import get_db
 
-POS_RE = re.compile(r"(?i)(?<![A-Za-z])(adj|adv|vt|vi|v|n|prep|pron|conj|int|art|aux|abbr|num|det)\\.\\s*")
+POS_RE = re.compile(r"(?i)(?<![A-Za-z])(adj|adv|vt|vi|v|n|prep|pron|conj|int|art|aux|abbr|num|det)\.\s*")
 POS_NAMES = {
     "n": "名词", "v": "动词", "vt": "及物动词", "vi": "不及物动词",
     "adj": "形容词", "adv": "副词", "prep": "介词", "pron": "代词",
@@ -89,8 +89,8 @@ def init_mastery_tables():
 
 
 def _clean_fragment(value):
-    value = re.sub(r"\\s+", " ", value or "").strip(" ，,；;。")
-    value = re.sub(r"^\\[[^]]{1,12}\\]\\s*", "", value)
+    value = re.sub(r"\s+", " ", value or "").strip(" ，,；;。")
+    value = re.sub(r"^\[[^]]{1,12}\]\s*", "", value)
     return value.strip()
 
 
@@ -100,7 +100,7 @@ def split_translation(translation):
     This intentionally does not guess semantic boundaries inside one POS group.
     Those cases remain editable in the review screen.
     """
-    text = (translation or "").replace("\\r", "").strip()
+    text = (translation or "").replace("\r", "").strip()
     if not text:
         return []
     groups = []
@@ -320,7 +320,7 @@ def split_fragment_to_sense(sense_id, source_order):
         return {"ok": True, "new_sense_id": new_sense_id}
 
 def _norm(value):
-    return re.sub(r"\\s+", "", re.sub(r"[，,；;。！？!?、]", "", value or "")).casefold()
+    return re.sub(r"\s+", "", re.sub(r"[，,；;。！？!?、]", "", value or "")).casefold()
 
 
 def _weighted_fragment(conn, sense_id):
