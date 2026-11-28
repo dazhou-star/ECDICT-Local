@@ -89,35 +89,34 @@ def init_mastery_tables():
 
 
 def _clean_fragment(value):
-    value = re.sub(r"\s+", " ", value or "").strip(" ，,；;。")
-    value = re.sub(r"^\[[^]]{1,12}\]\s*", "", value)
+    value = re.sub(r"<[^>]*>", " ", value or "")
+    value = re.sub(r"^\s*\[[^]]{1,16}\]\s*", "", value)
+    value = re.sub(r"\s+", " ", value).strip(" ，,；;。")
     return value.strip()
 
 
-def split_translation(translation):
-    """Group translation lines by explicit POS labels; semicolon-separated glosses become fragments.
+def _split_glosses(raw):
+    # ECDICT commonly uses commas, enumeration commas and semicolons between glosses.
+    pieces = re.split(r"[；;，,、\n]+", raw or "")
+    cleaned = [_clean_fragment(piece) for piece in pieces]
+    return list(dict.fromkeys(x for x in cleaned if x and len(x) <= 100))
 
-    This intentionally does not guess semantic boundaries inside one POS group.
-    Those cases remain editable in the review screen.
-    """
-    text = (translation or "").replace("\r", "").strip()
-    if not text:
-        return []
+
+def split_translation(translation):
+    """Split ECDICT translation into POS groups and short, independently tested glosses."""
+    text = (translation or "")
+    # Normalize literal backslash-n sequences from imported data.
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
     groups = []
     current_pos = ""
     current_parts = []
 
     def flush():
         nonlocal current_parts
-        raw = " ".join(p for p in current_parts if p).strip()
-        if raw:
-            pieces = [_clean_fragment(x) for x in re.split(r"[；;]", raw)]
-            fragments = list(dict.fromkeys(x for x in pieces if x and len(x) <= 160))
-            if not fragments:
-                fragments = [_clean_fragment(raw)]
-            fragments = [x for x in fragments if x]
-            if fragments:
-                groups.append((current_pos, fragments))
+        raw = "\n".join(part for part in current_parts if part).strip()
+        fragments = _split_glosses(raw)
+        if fragments:
+            groups.append((current_pos, fragments))
         current_parts = []
 
     for line in text.splitlines():
@@ -136,12 +135,10 @@ def split_translation(translation):
     flush()
 
     if not groups:
-        pieces = [_clean_fragment(x) for x in re.split(r"[；;]", text)]
-        fragments = list(dict.fromkeys(x for x in pieces if x))
+        fragments = _split_glosses(text)
         if fragments:
             groups.append(("", fragments))
     return groups
-
 
 def prepare_favorites():
     created_words = 0
@@ -164,13 +161,11 @@ def prepare_favorites():
                 (word,),
             ).fetchall()
             if existing:
-                # Existing draft senses are activated automatically; no manual proofreading step.
+                # Re-split fragments in place; old fragment rows remain for history references.
+                groups = split_translation(favorite["translation"] or "")
                 for sense in existing:
                     if sense["review_state"] == "draft":
-                        conn.execute(
-                            "UPDATE word_senses SET review_state='active' WHERE id=?",
-                            (sense["id"],),
-                        )
+                        conn.execute("UPDATE word_senses SET review_state='active' WHERE id=?", (sense["id"],))
                         activated_senses += 1
                     if sense["review_state"] != "ignored":
                         conn.execute(
@@ -179,6 +174,24 @@ def prepare_favorites():
                                VALUES (?, 'read', ?, 1)""",
                             (sense["id"], first_due),
                         )
+                    order = sense["source_order"]
+                    if 0 <= order < len(groups):
+                        new_pos, new_fragments = groups[order]
+                        old_fragments = [row["fragment"] for row in conn.execute(
+                            "SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",
+                            (sense["id"],),
+                        ).fetchall()]
+                        if old_fragments != new_fragments:
+                            conn.execute("UPDATE sense_fragments SET enabled=0 WHERE sense_id=?", (sense["id"],))
+                            for fragment_order, fragment in enumerate(new_fragments):
+                                conn.execute(
+                                    "INSERT INTO sense_fragments(sense_id,fragment,source_order,enabled) VALUES (?,?,?,1)",
+                                    (sense["id"], fragment, fragment_order),
+                                )
+                            conn.execute(
+                                "UPDATE word_senses SET pos=?, sense_text=?, source_translation=? WHERE id=?",
+                                (new_pos, "；".join(new_fragments), favorite["translation"] or "", sense["id"]),
+                            )
                 continue
 
             groups = split_translation(favorite["translation"] or "")
@@ -376,6 +389,87 @@ def _weighted_fragment(conn, sense_id):
     return random.choices([x[0] for x in weighted], weights=[x[1] for x in weighted], k=1)[0]
 
 
+
+def _pos_family(pos):
+    pos = (pos or "").lower()
+    if pos == "n": return "n"
+    if pos in ("v", "vt", "vi"): return "v"
+    if pos in ("adj", "a"): return "adj"
+    if pos in ("adv", "ad"): return "adv"
+    return pos
+
+
+def _meaning_similarity(left, right):
+    a = set(re.findall(r"[\u3400-\u9fff]", left or ""))
+    b = set(re.findall(r"[\u3400-\u9fff]", right or ""))
+    if not a or not b:
+        return 0.0
+    return len(a & b) / max(1, len(a | b))
+
+
+def _dictionary_distractors(conn, correct, target_pos, target_word, limit=3):
+    """Find hard distractors from all ECDICT entries, not just favorites."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
+    if "translation" not in columns:
+        return []
+    chars = list(dict.fromkeys(
+        char for char in re.findall(r"[\u3400-\u9fff]", correct)
+        if char not in "的了是和与及或其一个不在有为"
+    ))
+    random.shuffle(chars)
+    rows_by_word = {}
+    # Shared Chinese characters produce a useful, bounded semantic neighborhood.
+    for char in chars[:4]:
+        rows = conn.execute(
+            "SELECT word, translation FROM words WHERE translation LIKE ? AND word<>? COLLATE NOCASE LIMIT 120",
+            ("%" + char + "%", target_word),
+        ).fetchall()
+        for row in rows:
+            rows_by_word.setdefault(row["word"].casefold(), row)
+    # If that neighborhood is small, sample a bounded window from the entire dictionary.
+    if len(rows_by_word) < 80:
+        maximum = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM words").fetchone()[0]
+        if maximum:
+            start = random.randint(1, max(1, maximum))
+            sampled = conn.execute(
+                "SELECT word, translation FROM words WHERE rowid>=? AND translation<>'' AND word<>? COLLATE NOCASE LIMIT 700",
+                (start, target_word),
+            ).fetchall()
+            for row in sampled:
+                rows_by_word.setdefault(row["word"].casefold(), row)
+
+    target_family = _pos_family(target_pos)
+    correct_norm = _norm(correct)
+    ranked = []
+    for row in rows_by_word.values():
+        for candidate_pos, fragments in split_translation(row["translation"] or ""):
+            if _pos_family(candidate_pos) != target_family:
+                continue
+            for value in fragments:
+                key = _norm(value)
+                if not key or key == correct_norm or len(value) < 2:
+                    continue
+                if key in correct_norm or correct_norm in key:
+                    continue
+                overlap = _meaning_similarity(correct, value)
+                length_score = 1.0 - min(1.0, abs(len(value) - len(correct)) / max(5, len(correct) * 1.5))
+                # Prefer similar-length phrases with partial lexical overlap, not duplicates.
+                if overlap < 0.12 or overlap > 0.72:
+                    continue
+                ranked.append((overlap * 0.65 + length_score * 0.35, value))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    selected, seen = [], {correct_norm}
+    for _, value in ranked:
+        key = _norm(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(value)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 def create_question():
     today = date.today().isoformat()
     with get_db() as conn:
@@ -412,29 +506,11 @@ def create_question():
         if fragment is None:
             return {"done": True, "next_review_date": None, "message": "该义项没有可用解释片段"}
         correct = fragment["fragment"]
-        candidates = conn.execute(
-            """SELECT f.fragment FROM sense_fragments f
-               JOIN word_senses s ON s.id=f.sense_id
-               WHERE s.mode='read' AND s.review_state='active'
-                 AND s.word <> ? COLLATE NOCASE AND f.enabled=1
-               ORDER BY RANDOM() LIMIT 300""",
-            (sense["word"],),
-        ).fetchall()
-        distractors = []
-        seen = {_norm(correct)}
-        for candidate in candidates:
-            value = candidate["fragment"]
-            key = _norm(value)
-            if not key or key in seen or _norm(value) in _norm(correct) or _norm(correct) in _norm(value):
-                continue
-            seen.add(key)
-            distractors.append(value)
-            if len(distractors) == 3:
-                break
+        distractors = _dictionary_distractors(conn, correct, sense["pos"], sense["word"], 3)
         options = distractors + [correct]
         random.shuffle(options)
         if len(options) < 2:
-            return {"done": True, "next_review_date": None, "message": "可用干扰项不足：请先校对并启用更多义项"}
+            return {"done": True, "next_review_date": None, "message": "全词库中暂时找不到可靠干扰项，本题跳过"}
         question_id = uuid4().hex
         conn.execute(
             """INSERT INTO mastery_questions
