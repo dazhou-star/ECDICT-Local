@@ -798,79 +798,207 @@ def overview():
     return {"favorites": favorites, "senses": senses, "drafts": drafts, "active": active, "due": due, "tests": total}
 
 
-def export_print_data(start_date=None, end_date=None):
-    """Build a read-only snapshot for continuous-roll printing."""
-    favorite_filters = []
-    params = []
-    if start_date:
-        favorite_filters.append("f.study_date>=?")
-        params.append(start_date)
-    if end_date:
-        favorite_filters.append("f.study_date<=?")
-        params.append(end_date)
-    favorite_where = "WHERE " + " AND ".join(favorite_filters) if favorite_filters else ""
-    sense_filters = []
-    if start_date:
-        sense_filters.append("fav.study_date>=?")
-    if end_date:
-        sense_filters.append("fav.study_date<=?")
-    sense_where = " AND ".join(sense_filters)
-    with get_db() as conn:
-        favorite_rows = conn.execute(
-            f"""SELECT f.word AS favorite_word, f.study_date, f.added_at, w.*
-                FROM favorites f LEFT JOIN words w ON w.word=f.word COLLATE NOCASE
-                {favorite_where}
-                ORDER BY f.study_date ASC, f.added_at ASC, f.id ASC""",
-            params,
-        ).fetchall()
-        words = []
-        for row in favorite_rows:
-            item = dict(row)
-            item["word"] = item.pop("favorite_word", None) or item.get("word") or ""
-            words.append(item)
 
-        senses = conn.execute(
-            f"""SELECT s.id, s.word, s.pos, s.sense_text, s.review_state
-                FROM word_senses s
-                JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
-                WHERE s.mode='read' AND s.review_state='active' {("AND " + sense_where) if sense_where else ""}
-                ORDER BY fav.study_date ASC, s.word COLLATE NOCASE, s.source_order""",
-            params,
+def _build_print_distractor_index(conn):
+    """Sample and parse the dictionary once for the entire weekly print job."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(words)")}
+    if "translation" not in columns:
+        return {}
+    maximum = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM words").fetchone()[0]
+    if not maximum:
+        return {}
+    metadata_columns = [name for name in ("frq", "tag", "oxford") if name in columns]
+    select_columns = ["word", "translation"] + metadata_columns
+    rows_by_word = {}
+    for _ in range(12):
+        start = random.randint(1, maximum)
+        rows = conn.execute(
+            f"SELECT {', '.join(select_columns)} FROM words "
+            "WHERE rowid>=? AND translation<>'' LIMIT 900",
+            (start,),
         ).fetchall()
+        for row in rows:
+            rows_by_word.setdefault(row["word"].casefold(), row)
+        if len(rows_by_word) >= 5000:
+            break
 
-        exercises = []
-        skipped = 0
-        for sense in senses:
-            fragments = conn.execute(
-                "SELECT fragment FROM sense_fragments WHERE sense_id=? AND enabled=1 ORDER BY source_order",
-                (sense["id"],),
-            ).fetchall()
-            if not fragments:
-                skipped += 1
+    inflected_words = _inflected_forms(conn, [row["word"] for row in rows_by_word.values()])
+    pools = {
+        "same_gk": [], "same_common": [], "same_any": [],
+        "other_gk": [], "other_common": [], "other_any": [],
+    }
+    for row in rows_by_word.values():
+        tag = str(row["tag"] or "").casefold() if "tag" in columns else ""
+        tag_tokens = set(re.findall(r"[a-z0-9_]+", tag))
+        if tag_tokens.intersection({"name", "proper", "person", "place", "地名", "人名", "surname", "firstname"}):
+            continue
+        if row["word"].casefold() in inflected_words:
+            continue
+        is_high_school = "gk" in tag_tokens
+        try:
+            has_frequency = int(row["frq"] or 0) > 0 if "frq" in columns else False
+        except (TypeError, ValueError):
+            has_frequency = False
+        try:
+            is_oxford = int(row["oxford"] or 0) > 0 if "oxford" in columns else False
+        except (TypeError, ValueError):
+            is_oxford = False
+        tier = "gk" if is_high_school else ("common" if has_frequency or is_oxford else "any")
+        for candidate_pos, value, marker in _split_translation_for_distractors(row["translation"] or ""):
+            if _is_excluded_distractor_sense(value, marker, tag_tokens):
                 continue
-            for fragment in fragments:
-                correct = fragment["fragment"]
-                distractors = _dictionary_distractors(conn, correct, sense["pos"], sense["word"], 3)
-                if len(distractors) < 3:
+            key = _norm(value)
+            if len(value) < 2 or not key:
+                continue
+            family = "same" if _pos_family(candidate_pos) else "other"
+            # Store the actual POS family so selection can prefer the target POS.
+            pools[f"{family}_{tier}"].append((row["word"].casefold(), candidate_pos, value))
+    for pool in pools.values():
+        random.shuffle(pool)
+    return pools
+
+
+def _select_print_distractors(index, correct, target_pos, target_word, limit=3):
+    target_family = _pos_family(target_pos)
+    correct_key = _norm(correct)
+    selected = []
+    selected_keys = {correct_key}
+    ordered = []
+    for group in ("same", "other"):
+        for tier in ("gk", "common", "any"):
+            ordered.append((group, tier))
+    # Prefer same POS; retain the original tier ordering.
+    pools = []
+    for group in ("same", "other"):
+        for tier in ("gk", "common", "any"):
+            pools.append((group, tier))
+    for group, tier in pools:
+        candidates = index.get(f"{group}_{tier}", [])
+        for candidate_word, candidate_pos, value in candidates:
+            key = _norm(value)
+            if candidate_word == target_word.casefold() or not key or key in selected_keys:
+                continue
+            if key in correct_key or correct_key in key:
+                continue
+            if _pos_family(candidate_pos) != target_family and group == "same":
+                continue
+            if _too_similar_meaning(value, correct) or any(_too_similar_meaning(value, chosen) for chosen in selected):
+                continue
+            selected.append(value)
+            selected_keys.add(key)
+            if len(selected) >= limit:
+                return selected
+    # Fallback retains exact/substring exclusions but relaxes semantic similarity.
+    for group, tier in pools:
+        for candidate_word, candidate_pos, value in index.get(f"{group}_{tier}", []):
+            key = _norm(value)
+            if candidate_word == target_word.casefold() or not key or key in selected_keys:
+                continue
+            if key in correct_key or correct_key in key:
+                continue
+            selected.append(value)
+            selected_keys.add(key)
+            if len(selected) >= limit:
+                return selected
+    return selected
+
+
+def _next_week_range(today=None):
+    today = today or date.today()
+    days_until_monday = 7 - today.weekday()
+    start = today + timedelta(days=days_until_monday)
+    return start, start + timedelta(days=6)
+
+
+def export_print_data():
+    """Build a read-only, automatically scheduled seven-day review paper strip."""
+    week_start, week_end = _next_week_range()
+    start_iso, end_iso = week_start.isoformat(), week_end.isoformat()
+    weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    days = []
+    for offset in range(7):
+        day = week_start + timedelta(days=offset)
+        days.append({
+            "date": day.isoformat(), "label": weekday_names[offset],
+            "words": [], "exercises": [],
+        })
+
+    with get_db() as conn:
+        due_senses = conn.execute(
+            """SELECT s.id AS sense_id, s.word, s.pos, s.source_order,
+                      m.next_review_date, f.study_date
+               FROM word_senses s
+               JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
+               JOIN favorites f ON f.word=s.word COLLATE NOCASE
+               WHERE s.mode='read' AND s.review_state='active'
+                 AND m.next_review_date<=?
+               ORDER BY m.next_review_date, s.word COLLATE NOCASE, s.source_order""",
+            (end_iso,),
+        ).fetchall()
+
+        # Overdue items are carried into Monday; future items keep their scheduled day.
+        scheduled = {}
+        for sense in due_senses:
+            due_date = max(start_iso, sense["next_review_date"])
+            if due_date > end_iso:
+                continue
+            scheduled.setdefault(due_date, []).append(sense)
+
+        all_words = {}
+        for row in conn.execute(
+            """SELECT f.word AS favorite_word, w.* FROM favorites f
+               LEFT JOIN words w ON w.word=f.word COLLATE NOCASE"""
+        ).fetchall():
+            item = dict(row)
+            word = item.pop("favorite_word", None) or item.get("word") or ""
+            item["word"] = word
+            all_words[word.casefold()] = item
+
+        fragments_by_sense = {}
+        exercise_count = 0
+        skipped = 0
+        candidate_index = _build_print_distractor_index(conn) if due_senses else {}
+        for day in days:
+            for sense in scheduled.get(day["date"], []):
+                word_key = sense["word"].casefold()
+                if word_key not in all_words:
+                    continue
+                if word_key not in {w["word"].casefold() for w in day["words"]}:
+                    day["words"].append(all_words[word_key])
+                fragments = conn.execute(
+                    """SELECT id, fragment FROM sense_fragments
+                       WHERE sense_id=? AND enabled=1 ORDER BY source_order""",
+                    (sense["sense_id"],),
+                ).fetchall()
+                if not fragments:
                     skipped += 1
                     continue
-                options = distractors + [correct]
-                random.shuffle(options)
-                exercises.append({
-                    "word": sense["word"],
-                    "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
-                    "options": options,
-                    "answer": options.index(correct),
-                    "meaning": correct,
-                })
+                for fragment in fragments:
+                    correct = fragment["fragment"]
+                    distractors = _select_print_distractors(
+                        candidate_index, correct, sense["pos"], sense["word"], 3
+                    )
+                    if len(distractors) < 3:
+                        skipped += 1
+                        continue
+                    options = distractors + [correct]
+                    random.shuffle(options)
+                    day["exercises"].append({
+                        "word": sense["word"],
+                        "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
+                        "options": options,
+                        "answer": options.index(correct),
+                        "meaning": correct,
+                    })
+                    exercise_count += 1
 
+    for day in days:
+        day["words"].sort(key=lambda item: item["word"].casefold())
     return {
-        "words": words,
-        "exercises": exercises,
+        "week_start": start_iso, "week_end": end_iso, "days": days,
         "counts": {
-            "words": len(words),
-            "active_senses": len(senses),
-            "exercises": len(exercises),
-            "skipped_exercises": skipped,
+            "words": sum(len(day["words"]) for day in days),
+            "exercises": exercise_count, "skipped_exercises": skipped,
+            "scheduled_senses": sum(len(items) for items in scheduled.values()),
         },
     }
