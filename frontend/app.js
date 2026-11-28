@@ -256,6 +256,42 @@
     search.addEventListener("input",render); sort.addEventListener("change",render); render();
   }
 
+
+  async function showMastery(mode="read") {
+    mode = mode === "write" ? "write" : "read";
+    state.page="mastery"; setSide("mastery"); hideSuggestions();
+    $("#welcome").hidden=true; $("#empty").hidden=true;
+    $("#results").innerHTML='<section class="mastery-panel">正在加载…</section>';
+    try {
+      const [o,d]=await Promise.all([api(`/api/mastery/${mode}/overview`),api(`/api/mastery/${mode}/senses`)]);
+      $("#results").innerHTML=`<section class="mastery-panel">
+        <header class="mastery-heading"><div><div class="collection-kicker">MASTERY & REVIEW</div><h2>掌握度与复习计划</h2><p>读写单词本的掌握度、复习进度和历史相互独立。</p></div><a href="/print.html?mode=${mode}" target="_blank">纸条打印 ↗</a></header>
+        <div class="mastery-switch"><button data-mm="read" class="${mode==="read"?"active":""}">📖 读单词本</button><button data-mm="write" class="${mode==="write"?"active":""}">✎ 写单词本</button></div>
+        <div class="mastery-stats"><div><b>${o.words}</b><span>单词</span></div><div><b>${o.active}</b><span>有效义项</span></div><div><b>${o.due}</b><span>待复习义项</span></div><div><b>${o.tests}</b><span>检测记录</span></div></div>
+        <p>${mode==="read"?"保留原有掌握度和复习计划；读单词本不提供检测练习。":"根据中文释义主动拼写英文，答题后独立更新写单词本的复习间隔。"}</p>
+        ${mode==="write"?'<button id="writeStart" class="primary-action">开始拼写复习</button>':""}<div id="writeQuestionHost"></div>
+        <h3>义项复习状态</h3><div class="mastery-sense-list">${d.items.map(x=>`<article class="mastery-sense"><div><b>${esc(x.word)}</b> <small>${esc(x.pos||"")}</small><p>${esc(x.fragments||x.sense_text||"")}</p></div><div class="mastery-sense-meta"><span>下次复习：${esc(x.next_review_date||"未安排")}</span><span>连续正确 ${x.streak||0} 次 · 正确 ${x.total_correct||0} / 错误 ${x.total_wrong||0}</span><select data-sid="${x.id}"><option value="active" ${x.review_state==="active"?"selected":""}>纳入复习</option><option value="draft" ${x.review_state==="draft"?"selected":""}>暂存</option><option value="ignored" ${x.review_state==="ignored"?"selected":""}>忽略</option></select></div></article>`).join("")||"<p>暂无义项</p>"}</div></section>`;
+      document.querySelectorAll("[data-mm]").forEach(b=>b.onclick=()=>showMastery(b.dataset.mm));
+      document.querySelectorAll("[data-sid]").forEach(el=>el.onchange=async()=>{try{await api(`/api/mastery/${mode}/senses/${el.dataset.sid}/state`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:el.value})});showMastery(mode);}catch(e){status(e.message);}});
+      const start=document.getElementById("writeStart"); if(start)start.onclick=loadWriteQuestion;
+    } catch(e) {$("#results").innerHTML=`<section class="mastery-panel">加载失败：${esc(e.message)}</section>`;}
+  }
+  async function loadWriteQuestion(){
+    const host=document.getElementById("writeQuestionHost"); if(!host)return;
+    host.textContent="正在准备题目…";
+    try{
+      const q=await api("/api/mastery/write/question",{method:"POST"});
+      if(q.done){host.innerHTML=`<p>${esc(q.message||("下一次复习："+(q.next_review_date||"暂无待复习义项")))}</p>`;return;}
+      host.innerHTML=`<div class="write-question"><div class="write-prompt">${esc(q.prompt)}</div><small>${esc(q.pos||"")}</small><form id="writeAnswerForm"><input id="writeAnswer" required autocomplete="off" placeholder="写出英文单词"><button class="primary-action">提交</button></form><div id="writeFeedback"></div></div>`;
+      document.getElementById("writeAnswer").focus();
+      document.getElementById("writeAnswerForm").onsubmit=async e=>{e.preventDefault();const btn=e.currentTarget.querySelector("button");btn.disabled=true;try{const a=await api("/api/mastery/write/answer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question_id:q.question_id,answer:document.getElementById("writeAnswer").value})});document.getElementById("writeFeedback").innerHTML=`<p class="${a.correct?"answer-correct":"answer-wrong"}">${a.correct?"回答正确":"回答错误，正确答案："+esc(a.correct_answer)} · 下次复习：${esc(a.next_review_date)}</p><button id="writeNext" type="button">下一题</button>`;document.getElementById("writeNext").onclick=loadWriteQuestion;}catch(err){btn.disabled=false;status(err.message);}};
+    }catch(e){host.textContent="无法生成题目："+e.message;}
+  }
+  function showPrintChooser(){
+    state.page="print";setSide("print");hideSuggestions();$("#welcome").hidden=true;$("#empty").hidden=true;
+    $("#results").innerHTML='<section class="mastery-panel"><h2>纸条打印</h2><p>独立的 80mm 纯纸张页面，无需应用内打印按钮。</p><div class="print-mode-options"><a href="/print.html?mode=read" target="_blank">📖 读单词本纸条 <small>复习清单，不含检测题</small></a><a href="/print.html?mode=write" target="_blank">✎ 写单词本练习纸 <small>中文提示、英文填空、答案置于末尾</small></a></div></section>';
+  }
+
   function isSaved(word) {
     return state.favorites.some(
       savedWord => savedWord.toLowerCase() === String(word).toLowerCase()
@@ -2289,7 +2325,7 @@ function speakWord(word) {
 
         showBook("write");
 
-      } else if (b.dataset.page === "image-import") {
+      } else if (b.dataset.page === "mastery") {\n        showMastery("read");\n      } else if (b.dataset.page === "print") {\n        showPrintChooser();\n      } else if (b.dataset.page === "image-import") {
 
         showImageImport();
 
