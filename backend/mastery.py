@@ -426,15 +426,15 @@ DISTRACTOR_FOREIGN_RE = re.compile(
 def _split_translation_for_distractors(translation):
     """Return (pos, clean gloss, leading ECDICT marker) without losing metadata."""
     text = (translation or "")
-    text = text.replace("\\r\\n", "\\n").replace("\\n", "\\n").replace("\\r", "\\n")
+    text = text.replace("\\\\r\\\\n", "\n").replace("\\\\n", "\n").replace("\\\\r", "\n")
     groups = []
     current_pos = ""
     current_parts = []
 
     def flush():
         nonlocal current_parts
-        raw = "\\n".join(part for part in current_parts if part).strip()
-        for piece in re.split(r"[；;，,、\\n]+", raw):
+        raw = "\n".join(part for part in current_parts if part).strip()
+        for piece in re.split(r"[；;，,、\n]+", raw):
             piece = re.sub(r"<[^>]*>", " ", piece or "").strip()
             marker_match = re.match(r"^\\s*\\[([^]]{1,16})\\]\\s*", piece)
             marker = marker_match.group(1).strip() if marker_match else ""
@@ -504,7 +504,7 @@ def _inflected_forms(conn, candidate_words):
             if ":" not in item:
                 continue
             _, forms = item.split(":", 1)
-            for form in re.split(r"[,，/\\s]+", forms):
+            for form in re.split(r"[,，/\s]+", forms):
                 form = form.strip().casefold()
                 if form in wanted:
                     found.add(form)
