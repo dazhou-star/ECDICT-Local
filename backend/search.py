@@ -26,12 +26,17 @@ def search_words(q: str, limit: int = 15, offset: int = 0, mode: str = "prefix")
         selected = [f'"{name}"' for name in fields if name in columns]
         selected.append('"frq"' if "frq" in columns else "NULL AS frq")
         selected_sql = ", ".join(selected)
+        freq_order = (
+            "CASE WHEN CAST(frq AS INTEGER)>0 THEN CAST(frq AS INTEGER) ELSE 2147483647 END"
+            if "frq" in columns else "word COLLATE NOCASE"
+        )
         if mode == "contains" and len(q) >= 3:
             pattern = "%" + _escape_like(q) + "%"
         else:
             pattern = _escape_like(q) + "%"
         rows = conn.execute(
-            f"SELECT {selected_sql} FROM words WHERE word LIKE ? ESCAPE '!' LIMIT ?",
+            f"SELECT {selected_sql} FROM words WHERE word LIKE ? ESCAPE '!' "
+            f"ORDER BY {freq_order} LIMIT ?",
             (pattern, max(limit * 12, 120)),
         ).fetchall()
         candidates = {}
@@ -42,10 +47,6 @@ def search_words(q: str, limit: int = 15, offset: int = 0, mode: str = "prefix")
         if mode == "prefix" and len(q) >= 4:
             low = max(1, len(q) - (2 if len(q) >= 7 else 1))
             high = len(q) + (2 if len(q) >= 7 else 1)
-            freq_order = (
-                "CASE WHEN CAST(frq AS INTEGER)>0 THEN CAST(frq AS INTEGER) ELSE 2147483647 END"
-                if "frq" in columns else "word COLLATE NOCASE"
-            )
             if q[0:1].isalpha():
                 rows = conn.execute(
                     f"SELECT {selected_sql} FROM words WHERE word LIKE ? ESCAPE '!' "
