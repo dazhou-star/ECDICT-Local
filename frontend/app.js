@@ -20,6 +20,7 @@
     favoriteDates: {},
     bookWords: { read: [], write: [] },
     bookDates: { read: {}, write: {} },
+    bookUnknown: { read: {}, write: {} },
 
     history: read("lexicon-history", []),
 
@@ -158,6 +159,9 @@
     state.bookDates[mode] = Object.fromEntries(items.map(item => [
       item.word.toLowerCase(), item.study_date || item.added_at
     ]));
+    state.bookUnknown[mode] = Object.fromEntries(items.map(item => [
+      item.word.toLowerCase(), Boolean(item.is_unknown)
+    ]));
     const count = document.getElementById(mode === "read" ? "readBookCount" : "writeBookCount");
     if (count) count.textContent = items.length;
     return items;
@@ -205,6 +209,15 @@
     }
   }
 
+  async function setWordUnknown(word, unknown, mode=null, questionId=null) {
+    return api(`/api/words/${encodeURIComponent(word)}/unknown`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unknown, mode, question_id: questionId })
+    });
+  }
+
+
   async function showBook(mode) {
     await loadBook(mode);
     const page = mode === "read" ? "read-book" : "write-book";
@@ -242,11 +255,18 @@
       grid.innerHTML = items.map((item,i)=>`
         <article class="collection-word-card">
           <button class="collection-word-open" data-open-word="${esc(item.word)}"><span class="collection-word-main"><span class="collection-word">${esc(item.word)}</span><span class="collection-word-index">${String(i+1).padStart(2,"0")}</span></span><span class="collection-word-meta">添加日期 ${esc(formatFavoriteDate(item.study_date))}</span></button>
+          <button class="collection-action ${state.bookUnknown[mode][item.word.toLowerCase()] ? "unknown-active" : "unknown"}" data-unknown-word="${esc(item.word)}">${state.bookUnknown[mode][item.word.toLowerCase()] ? "不认识 · 取消" : "不认识"}</button>
           <button class="collection-action remove" data-remove-word="${esc(item.word)}">移除</button>
         </article>`).join("");
       empty.hidden = items.length > 0;
       grid.hidden = items.length === 0;
       grid.querySelectorAll("[data-open-word]").forEach(b=>b.addEventListener("click",()=>showWord(b.dataset.openWord)));
+      grid.querySelectorAll("[data-unknown-word]").forEach(b=>b.addEventListener("click",async()=>{
+        const word=b.dataset.unknownWord, unknown=!state.bookUnknown[mode][word.toLowerCase()];
+        b.disabled=true;
+        try { await setWordUnknown(word,unknown); await loadBook(mode); render(); }
+        catch(e){b.disabled=false;status("标记失败："+e.message);}
+      }));
       grid.querySelectorAll("[data-remove-word]").forEach(b=>b.addEventListener("click",async()=>{
         b.disabled=true;
         try { await api(`/api/books/${mode}/${encodeURIComponent(b.dataset.removeWord)}`,{method:"DELETE"}); await loadBook(mode); render(); }
@@ -278,18 +298,30 @@
   async function showReadTest() {
     state.page="read-test"; setSide("read-test"); hideSuggestions();
     $("#welcome").hidden=true; $("#empty").hidden=true;
-    $("#results").innerHTML='<section class="test-workspace"><header class="test-heading"><div class="collection-kicker">READING · MULTIPLE CHOICE</div><h2>读词检测</h2><p>看到英文单词，选择最符合当前义项的中文解释。每个义项独立记录掌握度。</p></header><div id="readTestStats" class="test-stats">正在读取复习状态…</div><button id="readTestStart" class="primary-action">开始检测</button><div id="readTestHost"></div></section>';
+    $("#results").innerHTML='<section class="test-workspace"><header class="test-heading"><div class="collection-kicker">READING · MULTIPLE CHOICE</div><h2>读词检测</h2><p>看到英文单词，选择最符合当前义项的中文解释。每个义项独立记录掌握度。</p></header><div id="readTestStats" class="test-stats">正在读取复习状态…</div><div class="test-actions"><label class="test-include-future"><input id="readIncludeFuture" type="checkbox"> 包含未到期单词</label><button id="readTestStart" class="primary-action">开始检测</button></div><div id="readTestHost"></div></section>';
     try {const o=await api("/api/mastery/read/overview");$("#readTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';} catch(e) {$("#readTestStats").textContent="状态读取失败："+e.message;}
     $("#readTestStart").onclick=nextReadQuestion;
   }
 
   async function nextReadQuestion() {
     const host=$("#readTestHost"); if(!host)return;
-    host.innerHTML='<p class="test-wait">正在抽取到期义项…</p>';
+    host.innerHTML='<p class="test-wait">正在抽取检测义项…</p>';
     try {
-      const q=await api("/api/mastery/read/question");
+      const includeFuture=$("#readIncludeFuture")?.checked;
+      const q=await api("/api/mastery/read/question"+(includeFuture?"?include_future=true":""));
       if(q.done){host.innerHTML='<div class="test-complete"><h3>'+esc(q.message||"当前没有待检测义项")+'</h3><p>'+(q.next_review_date?"下次复习："+esc(q.next_review_date):"请先在掌握度页面启用义项。")+'</p></div>';return;}
-      host.innerHTML='<article class="quiz-card"><div class="quiz-meta">读单词本 · 选择最符合的中文含义 · '+esc(q.pos||"")+'</div><h3>'+esc(q.word)+'</h3><p>这个单词在当前义项中表示：</p><div class="quiz-options">'+q.options.map((option,i)=>'<button data-read-answer="'+i+'"><span>'+String.fromCharCode(65+i)+'</span><div class="quiz-option-text">'+esc(option)+'</div></button>').join("")+'</div><div id="readQuizFeedback"></div><button class="quiz-next" id="readQuizNext" hidden>下一题</button></article>';
+      host.innerHTML='<article class="quiz-card"><div class="quiz-meta">读单词本 · 选择最符合的中文含义 · '+esc(q.pos||"")+'</div><h3>'+esc(q.word)+'</h3><p>这个单词在当前义项中表示：</p><div class="quiz-options">'+q.options.map((option,i)=>'<button data-read-answer="'+i+'"><span>'+String.fromCharCode(65+i)+'</span><div class="quiz-option-text">'+esc(option)+'</div></button>').join("")+'</div><div id="readQuizFeedback"></div><div class="quiz-unknown-row"><button type="button" class="mark-unknown" id="readMarkUnknown">标记为不认识</button></div><button class="quiz-next" id="readQuizNext" hidden>下一题</button></article>';
+      $("#readMarkUnknown").onclick=async()=>{
+        const b=$("#readMarkUnknown");b.disabled=true;
+        try{
+          await setWordUnknown(q.word,true,"read",q.question_id);
+          $("#readQuizFeedback").innerHTML='<div class="quiz-result wrong"><b>已标记为不认识</b><p>已加入优先复习，并记录为一次未掌握。</p></div>';
+          host.querySelectorAll("[data-read-answer]").forEach(x=>x.disabled=true);
+          b.textContent="已标记不认识";
+          $("#readQuizNext").hidden=false;$("#readQuizNext").onclick=nextReadQuestion;
+          const o=await api("/api/mastery/read/overview");$("#readTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';
+        }catch(e){b.disabled=false;status("标记失败："+e.message);}
+      };
       host.querySelectorAll("[data-read-answer]").forEach(button=>button.onclick=async()=>{
         if(button.disabled)return;
         host.querySelectorAll("[data-read-answer]").forEach(x=>x.disabled=true);
@@ -307,7 +339,7 @@
   async function showWriteTest() {
     state.page="write-test"; setSide("write-test"); hideSuggestions();
     $("#welcome").hidden=true; $("#empty").hidden=true;
-    $("#results").innerHTML='<section class="test-workspace write-test-workspace"><header class="test-heading"><div class="collection-kicker">WRITING · ACTIVE RECALL</div><h2>写词检测</h2><p>根据明确的中文释义写出目标英文单词。同义词不会直接判错，系统会逐步给出线索。</p></header><div id="writeTestStats" class="test-stats">正在读取复习状态…</div><button id="writeTestStart" class="primary-action">开始拼写检测</button><div id="writeTestHost"></div></section>';
+    $("#results").innerHTML='<section class="test-workspace write-test-workspace"><header class="test-heading"><div class="collection-kicker">WRITING · ACTIVE RECALL</div><h2>写词检测</h2><p>根据明确的中文释义写出目标英文单词。同义词不会直接判错，系统会逐步给出线索。</p></header><div id="writeTestStats" class="test-stats">正在读取复习状态…</div><div class="test-actions"><label class="test-include-future"><input id="writeIncludeFuture" type="checkbox"> 包含未到期单词</label><button id="writeTestStart" class="primary-action">开始拼写检测</button></div><div id="writeTestHost"></div></section>';
     try {const o=await api("/api/mastery/write/overview");$("#writeTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';} catch(e) {$("#writeTestStats").textContent="状态读取失败："+e.message;}
     $("#writeTestStart").onclick=loadWriteQuestion;
   }
@@ -316,11 +348,23 @@
     const host=$("#writeTestHost");if(!host)return;
     host.innerHTML='<p class="test-wait">正在准备拼写题…</p>';
     try{
-      const q=await api("/api/mastery/write/question",{method:"POST"});
+      const includeFuture=$("#writeIncludeFuture")?.checked;
+      const q=await api("/api/mastery/write/question"+(includeFuture?"?include_future=true":""),{method:"POST"});
       if(q.done){host.innerHTML='<div class="test-complete"><h3>'+esc(q.message||"当前没有待复习义项")+'</h3><p>'+(q.next_review_date?"下次复习："+esc(q.next_review_date):"请先在掌握度页面启用写单词本义项。")+'</p></div>';return;}
-      host.innerHTML='<article class="write-test-card"><div class="write-test-meta"><span>写单词本 · 目标词拼写</span><span>'+esc(q.due_date||"")+'</span></div><div class="write-test-prompt-label">请根据下面的释义写出对应英文单词</div><div class="write-test-prompt">'+esc(q.prompt)+'</div><div class="write-test-pos">'+esc(q.pos||"词性未标注")+'</div><form id="writeTestForm" class="write-test-form"><input id="writeTestAnswer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入英文单词…" required><button class="primary-action">提交</button></form><div id="writeTestFeedback" aria-live="polite"></div><button id="writeTestNext" class="quiz-next" hidden>下一题</button></article>';
+      host.innerHTML='<article class="write-test-card"><div class="write-test-meta"><span>写单词本 · 目标词拼写</span><span>'+esc(q.due_date||"")+'</span></div><div class="write-test-prompt-label">请根据下面的释义写出对应英文单词</div><div class="write-test-prompt">'+esc(q.prompt)+'</div><div class="write-test-pos">'+esc(q.pos||"词性未标注")+'</div><form id="writeTestForm" class="write-test-form"><input id="writeTestAnswer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入英文单词…" required><button class="primary-action">提交</button></form><div id="writeTestFeedback" aria-live="polite"></div><div class="quiz-unknown-row"><button type="button" class="mark-unknown" id="writeMarkUnknown">标记为不认识</button></div><button id="writeTestNext" class="quiz-next" hidden>下一题</button></article>';
       const input=$("#writeTestAnswer");
       input.focus();
+      $("#writeMarkUnknown").onclick=async()=>{
+        const b=$("#writeMarkUnknown");b.disabled=true;
+        try{
+          await setWordUnknown(q.word,true,"write",q.question_id);
+          input.disabled=true;$("#writeTestForm").querySelector("button").disabled=true;
+          $("#writeTestFeedback").innerHTML='<div class="quiz-result wrong"><b>已标记为不认识</b><p>已加入优先复习，并记录为一次未掌握。</p></div>';
+          b.textContent="已标记不认识";
+          $("#writeTestNext").hidden=false;$("#writeTestNext").onclick=loadWriteQuestion;
+          const o=await api("/api/mastery/write/overview");$("#writeTestStats").innerHTML='<span>到期义项 <b>'+o.due+'</b></span><span>累计检测 <b>'+o.tests+'</b></span>';
+        }catch(e){b.disabled=false;status("标记失败："+e.message);}
+      };
       $("#writeTestForm").onsubmit=async e=>{
         e.preventDefault();const form=e.currentTarget,button=form.querySelector("button");button.disabled=true;
         try{
