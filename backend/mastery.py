@@ -662,7 +662,7 @@ def create_question():
         # Lazily initialize missing review rows without changing favorites.study_date.
         active = conn.execute(
             """SELECT s.id, s.word, s.sense_text, s.pos, f.study_date
-               FROM word_senses s JOIN favorites f ON f.word=s.word COLLATE NOCASE
+               FROM word_senses s JOIN vocabulary_books f ON f.word=s.word COLLATE NOCASE AND f.mode='read'
                WHERE s.mode='read' AND s.review_state='active'"""
         ).fetchall()
         for row in active:
@@ -673,9 +673,9 @@ def create_question():
             )
         due_rows = conn.execute(
             """SELECT s.id, s.word, s.pos, s.sense_text, m.next_review_date, m.streak
-               FROM word_senses s JOIN favorites fav ON fav.word=s.word COLLATE NOCASE
+               FROM word_senses s JOIN vocabulary_books fav ON fav.word=s.word COLLATE NOCASE AND fav.mode='read'
                JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
-               WHERE s.review_state='active' AND m.next_review_date<=?
+               WHERE s.mode='read' AND s.review_state='active' AND m.next_review_date<=?
                ORDER BY m.next_review_date ASC, m.streak ASC, RANDOM() LIMIT 30""",
             (today,),
         ).fetchall()
@@ -683,7 +683,8 @@ def create_question():
             conn.commit()
             upcoming = conn.execute(
                 "SELECT MIN(m.next_review_date) FROM sense_mastery m JOIN word_senses s ON s.id=m.sense_id "
-                "JOIN favorites f ON f.word=s.word COLLATE NOCASE WHERE m.mode='read' AND m.next_review_date>?",
+                "JOIN vocabulary_books f ON f.word=s.word COLLATE NOCASE AND f.mode='read' "
+                "WHERE m.mode='read' AND m.next_review_date>?",
                 (today,),
             ).fetchone()[0]
             return {"done": True, "next_review_date": upcoming}
