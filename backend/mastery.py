@@ -896,29 +896,65 @@ def _select_print_distractors(index, correct, target_pos, target_word, limit=3):
     return selected
 
 def _next_week_range(today=None):
+    """Return the next Sunday-Friday paper week; Saturday is a catch-up buffer."""
     today = today or date.today()
-    days_until_monday = 7 - today.weekday()
-    start = today + timedelta(days=days_until_monday)
-    return start, start + timedelta(days=6)
+    days_until_sunday = (6 - today.weekday()) % 7
+    if days_until_sunday == 0:
+        days_until_sunday = 7
+    start = today + timedelta(days=days_until_sunday)
+    return start, start + timedelta(days=5)
+
+
+def _distribute_print_words(word_groups, day_count=6):
+    """Balance word-level workload while keeping each group near its due date.
+
+    Each group has word, due_date (ISO), and weight (enabled review fragments).
+    The weight-based greedy assignment avoids splitting one word across days.
+    """
+    if not word_groups:
+        return [[] for _ in range(day_count)]
+    total_weight = sum(max(1, int(item.get("weight", 1))) for item in word_groups)
+    target = max(1.0, total_weight / day_count)
+    capacity = max(1, int((target * 1.35) + 0.9999))
+    buckets = [[] for _ in range(day_count)]
+    loads = [0] * day_count
+
+    ordered = sorted(
+        word_groups,
+        key=lambda item: (item["due_date"], item["word"].casefold())
+    )
+    for item in ordered:
+        due_day = min(day_count - 1, max(0, (date.fromisoformat(item["due_date"]) -
+                       date.fromisoformat(ordered[0]["week_start"])).days)) if item.get("week_start") else 0
+        weight = max(1, int(item.get("weight", 1)))
+        candidates = [i for i in range(day_count) if loads[i] + weight <= capacity]
+        if not candidates:
+            candidates = list(range(day_count))
+        # Workload is the primary balancing objective; distance from the due
+        # date is a softer penalty so crowded due dates can be spread sensibly.
+        chosen = min(
+            candidates,
+            key=lambda i: ((loads[i] + weight) / target) + (abs(i - due_day) * 0.45)
+        )
+        buckets[chosen].append(item)
+        loads[chosen] += weight
+    return buckets
 
 
 def export_print_data():
-    """Build a read-only, automatically scheduled seven-day review paper strip."""
+    """Build a read-only, automatically balanced six-day review paper strip."""
     week_start, week_end = _next_week_range()
     start_iso, end_iso = week_start.isoformat(), week_end.isoformat()
-    weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    days = []
-    for offset in range(7):
-        day = week_start + timedelta(days=offset)
-        days.append({
-            "date": day.isoformat(), "label": weekday_names[offset],
-            "words": [], "exercises": [],
-        })
+    weekday_names = ["周日", "周一", "周二", "周三", "周四", "周五"]
+    days = [{
+        "date": (week_start + timedelta(days=offset)).isoformat(),
+        "label": weekday_names[offset], "words": [], "exercises": [],
+    } for offset in range(6)]
 
     with get_db() as conn:
         due_senses = conn.execute(
             """SELECT s.id AS sense_id, s.word, s.pos, s.source_order,
-                      m.next_review_date, f.study_date
+                      m.next_review_date
                FROM word_senses s
                JOIN sense_mastery m ON m.sense_id=s.id AND m.mode='read'
                JOIN favorites f ON f.word=s.word COLLATE NOCASE
@@ -928,13 +964,17 @@ def export_print_data():
             (end_iso,),
         ).fetchall()
 
-        # Overdue items are carried into Monday; future items keep their scheduled day.
-        scheduled = {}
+        # Group all due senses of one headword so a word is studied on one day.
+        senses_by_word = {}
         for sense in due_senses:
-            due_date = max(start_iso, sense["next_review_date"])
-            if due_date > end_iso:
-                continue
-            scheduled.setdefault(due_date, []).append(sense)
+            key = sense["word"].casefold()
+            group = senses_by_word.setdefault(key, {
+                "word": sense["word"], "due_date": sense["next_review_date"],
+                "senses": [], "weight": 0,
+            })
+            if sense["next_review_date"] < group["due_date"]:
+                group["due_date"] = sense["next_review_date"]
+            group["senses"].append(sense)
 
         all_words = {}
         for row in conn.execute(
@@ -946,43 +986,56 @@ def export_print_data():
             item["word"] = word
             all_words[word.casefold()] = item
 
-        fragments_by_sense = {}
-        exercise_count = 0
-        skipped = 0
-        candidate_index = _build_print_distractor_index(conn) if due_senses else {}
-        for day in days:
-            for sense in scheduled.get(day["date"], []):
-                word_key = sense["word"].casefold()
-                if word_key not in all_words:
-                    continue
-                if word_key not in {w["word"].casefold() for w in day["words"]}:
-                    day["words"].append(all_words[word_key])
-                fragments = conn.execute(
-                    """SELECT id, fragment FROM sense_fragments
-                       WHERE sense_id=? AND enabled=1 ORDER BY source_order""",
+        # Fragment count is a better workload estimate than word count alone.
+        for key, group in senses_by_word.items():
+            for sense in group["senses"]:
+                fragment_count = conn.execute(
+                    "SELECT COUNT(*) FROM sense_fragments WHERE sense_id=? AND enabled=1",
                     (sense["sense_id"],),
-                ).fetchall()
-                if not fragments:
-                    skipped += 1
-                    continue
-                for fragment in fragments:
-                    correct = fragment["fragment"]
-                    distractors = _select_print_distractors(
-                        candidate_index, correct, sense["pos"], sense["word"], 3
-                    )
-                    if len(distractors) < 3:
+                ).fetchone()[0]
+                group["weight"] += max(1, fragment_count)
+
+        groups = list(senses_by_word.values())
+        for group in groups:
+            group["week_start"] = start_iso
+        daily_groups = _distribute_print_words(groups, day_count=6)
+        candidate_index = _build_print_distractor_index(conn) if due_senses else {}
+        skipped = 0
+        exercise_count = 0
+
+        for day, groups_for_day in zip(days, daily_groups):
+            for group in groups_for_day:
+                word_key = group["word"].casefold()
+                word_item = all_words.get(word_key)
+                if word_item is not None:
+                    day["words"].append(word_item)
+                for sense in group["senses"]:
+                    fragments = conn.execute(
+                        """SELECT id, fragment FROM sense_fragments
+                           WHERE sense_id=? AND enabled=1 ORDER BY source_order""",
+                        (sense["sense_id"],),
+                    ).fetchall()
+                    if not fragments:
                         skipped += 1
                         continue
-                    options = distractors + [correct]
-                    random.shuffle(options)
-                    day["exercises"].append({
-                        "word": sense["word"],
-                        "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
-                        "options": options,
-                        "answer": options.index(correct),
-                        "meaning": correct,
-                    })
-                    exercise_count += 1
+                    for fragment in fragments:
+                        correct = fragment["fragment"]
+                        distractors = _select_print_distractors(
+                            candidate_index, correct, sense["pos"], sense["word"], 3
+                        )
+                        if len(distractors) < 3:
+                            skipped += 1
+                            continue
+                        options = distractors + [correct]
+                        random.shuffle(options)
+                        day["exercises"].append({
+                            "word": sense["word"],
+                            "pos": POS_NAMES.get(sense["pos"], sense["pos"]),
+                            "options": options,
+                            "answer": options.index(correct),
+                            "meaning": correct,
+                        })
+                        exercise_count += 1
 
     for day in days:
         day["words"].sort(key=lambda item: item["word"].casefold())
@@ -991,6 +1044,8 @@ def export_print_data():
         "counts": {
             "words": sum(len(day["words"]) for day in days),
             "exercises": exercise_count, "skipped_exercises": skipped,
-            "scheduled_senses": sum(len(items) for items in scheduled.values()),
+            "scheduled_senses": len(due_senses),
+            "daily_word_counts": [len(day["words"]) for day in days],
+            "daily_exercise_counts": [len(day["exercises"]) for day in days],
         },
     }
