@@ -1,5 +1,91 @@
-# ECDICT
+# ECDICT-Local｜本地英汉词典与词汇学习工具
 
+> 基于 ECDICT 和 SQLite 的本地英汉词典，附带读/写单词本、间隔复习、图片导词和纸条打印功能。
+
+## 快速部署（Windows 10/11）
+
+### 一键部署
+
+1. 下载并解压项目，或克隆 Git 仓库。
+2. 确保电脑已安装 **Python 3.10 或更高版本**，并能通过 Python Launcher（py -3.10）或命令行 python 调用。
+3. 双击项目根目录中的 **一键部署.bat**。
+4. 脚本会检查 Python、安装 requirements.txt 中缺少的依赖，并检查 SQLite 词典数据库。
+5. 部署准备完成后启动 Web 服务。在浏览器打开：
+
+   - 本机：<http://127.0.0.1:8000>
+   - 局域网：<http://本机局域网IP:8000>
+
+脚本不会创建新的 Python 虚拟环境，而是使用检测到的现有 Python 环境。pip install -r requirements.txt 会按依赖约束检查并安装所需包；已满足要求的包通常不会被重新安装。
+
+### 数据库初始化与保护
+
+- 首次部署时，如果 database/dictionary.db 不存在，脚本会使用仓库内的 ecdict.csv 自动生成 SQLite 数据库。
+- 如果数据库已经存在，脚本只检查其中是否有可用的 words 词条表，**不会重建、覆盖或清空数据库**。
+- 用户数据默认保存在 database/ 中，包括 dictionary.db 和图片导入原图目录 image_imports/。升级代码前建议先备份整个 database/ 文件夹。
+- 如果数据库文件存在但结构异常，部署脚本会停止，不会擅自用 CSV 替换它。
+
+### 日常启动与停止
+
+完成首次部署后，日常启动可以直接双击 **启动.bat**。服务运行期间不要关闭命令窗口；按 Ctrl+C 停止服务。
+
+默认端口为 8000。如需更换端口，可在启动前设置环境变量，例如：
+
+    set ECDICT_PORT=8080
+    启动.bat
+
+### 图片导词（可选）
+
+图片识别使用本机 Ollama 调用 Gemma 4 视觉模型。普通查词、单词本、复习和打印不依赖 Ollama。
+
+1. 安装并启动 Ollama。
+2. 在命令行下载模型：
+
+       ollama pull gemma4:latest
+
+3. 确认 Ollama 默认服务地址 http://127.0.0.1:11434 可访问，再进入应用使用图片导词。
+
+可通过环境变量更改模型连接：
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| LEXICON_OLLAMA_URL | http://127.0.0.1:11434 | Ollama 服务地址 |
+| LEXICON_OLLAMA_MODEL | gemma4:latest | 图片识别模型 |
+| LEXICON_OLLAMA_TIMEOUT | 300 | 图片识别请求超时（秒） |
+
+Ollama 和 Gemma 4 不会由部署脚本自动安装；模型体积较大，因此按需单独配置。
+
+## 主要功能
+
+- **本地词典查询**：基于 ECDICT SQLite 数据，支持前缀与包含搜索、词形还原及词典扩展信息。
+- **读单词本**：积累阅读理解词汇，按义项进行四选一检测，并独立安排间隔复习。
+- **写单词本**：积累主动拼写词汇，按中文释义进行拼写检测，支持词典释义核验与渐进提示。
+- **图片导词**：通过本地视觉模型识别单词表，结合词典候选进行校对，再选择导入读或写单词本。
+- **纸条打印**：分别生成读本复习清单和写本拼写练习纸条。
+- **本地数据**：词典和学习记录使用 SQLite 保存，无需托管数据库服务。
+
+## 开发与测试
+
+在项目根目录执行：
+
+    python -m unittest discover -s tests -v
+
+启动开发服务器：
+
+    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+依赖清单见 requirements.txt。当前核心 Web 服务依赖 FastAPI、Uvicorn、python-multipart 和 Pillow。
+
+## 更新项目
+
+更新代码前先备份 database/，然后在项目目录执行：
+
+    git pull
+
+更新后运行 启动.bat。部署脚本只会在数据库文件缺失时执行首次建库，不会在正常更新时重新导入 CSV。不要删除 database/，否则会丢失本地单词本、掌握度、复习记录及已保存的图片。
+
+---
+
+## ECDICT 原始词库说明
 Free English to Chinese Dictionary Database.
 
 ## 简介
