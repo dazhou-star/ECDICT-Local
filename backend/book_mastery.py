@@ -108,15 +108,15 @@ def set_sense_state(sense_id,mode,state):
         conn.commit()
     return {"id":sense_id,"mode":mode,"review_state":state}
 
-def next_write_question():
+def next_write_question(include_future=False):
     today=date.today().isoformat()
     with get_db() as conn:
         due=conn.execute(
             """SELECT s.id,s.word,s.pos,m.next_review_date
                FROM word_senses s JOIN vocabulary_books b ON b.word=s.word COLLATE NOCASE AND b.mode=s.mode
                JOIN sense_mastery m ON m.sense_id=s.id AND m.mode=s.mode
-               WHERE s.mode='write' AND s.review_state='active' AND m.next_review_date<=?
-               ORDER BY m.next_review_date,m.streak,RANDOM() LIMIT 1""",(today,)
+               WHERE s.mode='write' AND s.review_state='active' AND (?=1 OR m.next_review_date<=?)
+               ORDER BY CASE WHEN m.next_review_date<=? THEN 0 ELSE 1 END,m.next_review_date,m.streak,RANDOM() LIMIT 1""",(int(bool(include_future)),today,today)
         ).fetchone()
         if not due:
             upcoming=conn.execute(
@@ -140,7 +140,8 @@ def next_write_question():
         conn.execute("INSERT INTO write_question_progress(question_id,attempts) VALUES(?,0)", (qid,))
         conn.commit()
         return {"done":False,"question_id":qid,"prompt":frag["fragment"],
-                "pos":POS_NAMES.get(due["pos"],due["pos"]),"due_date":due["next_review_date"]}
+                "word":due["word"],"pos":POS_NAMES.get(due["pos"],due["pos"]),"due_date":due["next_review_date"],
+                "is_unknown": bool(conn.execute("SELECT 1 FROM word_recognition WHERE word=? COLLATE NOCASE AND is_unknown=1",(due["word"],)).fetchone())}
 
 def answer_write_question(question_id,answer):
     answer=(answer or "").strip()
